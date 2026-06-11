@@ -1,3 +1,25 @@
+## v0.8.3 (2026-06-11)
+
+### New Features
+
+- **Mongoose Traveller 2e (mgt2e) System Support**
+  - `list-creatures-by-criteria` now works on mgt2e worlds: filters by hit points, psionics, creature type, and actor type; indexed metadata includes characteristic DMs (STR/DEX/etc.)
+  - `search-compendium` extracts mgt2e-relevant stats (hits, behaviour, species, tonnage) from search results
+  - `manage-world-items` gains a new `describe` action that returns a live enum reference for mgt2e item fields (weapon traits, scales, armour forms, hardware system discriminators, software classes, etc.) — call it before creating items to get valid keys
+
+- **`manage-actors` — generic actor CRUD tool** (works on any game system)
+  - `create`: create one or more actors of any type with arbitrary `system` data; mgt2e convenience: accepts skill shorthands (`{ pilot: 2 }`), lowercase characteristic keys, and `system.details` remapped to `system.sophont`
+  - `update`: patch existing actors by ID; mgt2e skill shorthands normalised server-side (avoids Electron module-cache issue that prevented browser-side normalisation)
+  - `delete`: delete actors by ID
+  - `update-items`: update embedded items on an actor by item ID
+  - `delete-items`: delete embedded items from an actor by item ID
+
+### Fixes
+
+- `getIndex()` now uses the return value rather than `pack.indexed` state, fixing compendium indexing on Foundry v13 where `pack.indexed` behaviour changed
+
+---
+
 ## v0.8.2 (2026-06-07)
 
 ### New Features
