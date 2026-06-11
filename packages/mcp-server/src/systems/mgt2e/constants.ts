@@ -148,17 +148,17 @@ export const FIELD_PATHS = {
   // Hits / wounds
   HITS_VALUE: 'system.hits.value',
   HITS_MAX: 'system.hits.max',
-  DAMAGE_PHYSICAL: 'system.damage.physical',
-  DAMAGE_STUN: 'system.damage.stun',
+  // Characteristic damage (traveller only — system.damage.STR/DEX/END.value)
+  DAMAGE_STR: 'system.damage.STR.value',
+  DAMAGE_DEX: 'system.damage.DEX.value',
+  DAMAGE_END: 'system.damage.END.value',
 
-  // Details (traveller/npc)
-  DETAILS_SPECIES: 'system.details.species',
-  DETAILS_GENDER: 'system.details.gender',
-  DETAILS_AGE: 'system.details.age',
-  DETAILS_CAREER: 'system.details.career',
-  DETAILS_RANK: 'system.details.rank',
-  DETAILS_TITLE: 'system.details.title',
-  DETAILS_DESCRIPTION: 'system.details.description',
+  // Sophont details (traveller/npc) — stored under system.sophont, not system.details
+  SOPHONT_SPECIES: 'system.sophont.species',
+  SOPHONT_GENDER: 'system.sophont.gender',
+  SOPHONT_AGE: 'system.sophont.age',
+  SOPHONT_PROFESSION: 'system.sophont.profession',
+  SOPHONT_HOMEWORLD: 'system.sophont.homeworld',
 
   // Spacecraft
   SHIP_HULL: 'system.hull',

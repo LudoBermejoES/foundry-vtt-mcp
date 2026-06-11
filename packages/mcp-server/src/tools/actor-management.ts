@@ -23,7 +23,7 @@ import { detectGameSystem } from '../utils/system-detection.js';
  * a bare number shorthand (e.g. `{ pilot: 2 }`).
  */
 export const MGT2E_SKILL_SPECS: Record<string, string[]> = {
-  animals: ['handling', 'veterinary', 'training'],
+  animals: ['handling', 'vetinary', 'training'], // 'vetinary' is the module's own spelling
   art: ['performer', 'holography', 'instrument', 'visualMedia', 'write'],
   athletics: ['dexterity', 'endurance', 'strength'],
   drive: ['hovercraft', 'mole', 'track', 'walker', 'wheel'],
@@ -33,8 +33,38 @@ export const MGT2E_SKILL_SPECS: Record<string, string[]> = {
   gunner: ['turret', 'ortillery', 'screen', 'capital'],
   guncombat: ['archaic', 'energy', 'slug'],
   heavyweapons: ['artillery', 'portable', 'vehicle'],
+  language: ['galanglic', 'vilani', 'zdetl', 'oynprith', 'trokh', 'gvegh'],
   melee: ['unarmed', 'blade', 'bludgeon', 'natural'],
   pilot: ['smallCraft', 'spacecraft', 'capitalShips'],
+  profession: [
+    'belter',
+    'biologicals',
+    'civilEngineering',
+    'construction',
+    'hydroponics',
+    'polymers',
+    'robotics',
+  ],
+  science: [
+    'archaeology',
+    'astronomy',
+    'biology',
+    'chemistry',
+    'cosmology',
+    'cybernetics',
+    'economics',
+    'genetics',
+    'history',
+    'linquistics',
+    'philosophy',
+    'physics',
+    'planetology',
+    'psionicology',
+    'psychology',
+    'robotics',
+    'sophontology',
+    'xenology',
+  ],
   seafarer: ['oceanShips', 'personal', 'sail', 'submarine'],
   tactics: ['military', 'naval'],
 };

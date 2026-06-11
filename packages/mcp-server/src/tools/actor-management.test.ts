@@ -20,6 +20,23 @@ describe('MGT2E_SKILL_SPECS', () => {
     expect(MGT2E_SKILL_SPECS['guncombat'][0]).toBe('archaic');
   });
 
+  it('uses the module spelling "vetinary" (not "veterinary") for animals', () => {
+    expect(MGT2E_SKILL_SPECS['animals']).toContain('vetinary');
+    expect(MGT2E_SKILL_SPECS['animals']).not.toContain('veterinary');
+  });
+
+  it('lists language as a spec-skill with galanglic as primary speciality', () => {
+    expect(MGT2E_SKILL_SPECS['language'][0]).toBe('galanglic');
+  });
+
+  it('lists profession as a spec-skill with belter as primary speciality', () => {
+    expect(MGT2E_SKILL_SPECS['profession'][0]).toBe('belter');
+  });
+
+  it('lists science as a spec-skill with archaeology as primary speciality', () => {
+    expect(MGT2E_SKILL_SPECS['science'][0]).toBe('archaeology');
+  });
+
   it('does not list admin (simple skill)', () => {
     expect(MGT2E_SKILL_SPECS['admin']).toBeUndefined();
   });
