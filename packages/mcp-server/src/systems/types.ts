@@ -11,7 +11,7 @@ import { z } from 'zod';
  * Supported game system identifiers
  * Extend this type when adding new systems
  */
-export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'cosmere-rpg' | 'wfrp4e' | 'other';
+export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'cosmere-rpg' | 'wfrp4e' | 'mgt2e' | 'other';
 
 /**
  * System metadata returned by adapters
@@ -299,6 +299,23 @@ export interface WFRP4eCreatureIndex extends SystemCreatureIndex {
 }
 
 /**
+ * Mongoose Traveller 2e specific creature index structure
+ */
+export interface MGT2eCreatureIndex extends SystemCreatureIndex {
+  system: 'mgt2e';
+  systemData: {
+    /** Max hits (proxy for power level) */
+    hits?: number;
+    /** Broad creature category (animal, humanoid, alien, etc.) */
+    creatureType?: string;
+    /** True if PSI characteristic > 0 */
+    hasPsionics?: boolean;
+    /** Core characteristics snapshot — value + DM */
+    characteristics?: Record<string, { value: number; dm: number }>;
+  };
+}
+
+/**
  * Generic creature index for unsupported systems
  */
 export interface GenericCreatureIndex extends SystemCreatureIndex {
@@ -315,4 +332,5 @@ export type AnyCreatureIndex =
   | DSA5CreatureIndex
   | CosmereRpgCreatureIndex
   | WFRP4eCreatureIndex
+  | MGT2eCreatureIndex
   | GenericCreatureIndex;
