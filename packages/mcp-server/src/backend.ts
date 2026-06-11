@@ -23,6 +23,7 @@ import { CompendiumTools } from './tools/compendium.js';
 import { SceneTools } from './tools/scene.js';
 
 import { ActorCreationTools } from './tools/actor-creation.js';
+import { ActorManagementTools } from './tools/actor-management.js';
 
 import { QuestCreationTools } from './tools/quest-creation.js';
 
@@ -1170,6 +1171,7 @@ async function startBackend(): Promise<void> {
   const { DSA5Adapter } = await import('./systems/dsa5/adapter.js');
   const { CosmereRpgAdapter } = await import('./systems/cosmere-rpg/adapter.js');
   const { WFRP4eAdapter } = await import('./systems/wfrp4e/adapter.js');
+  const { MGT2eAdapter } = await import('./systems/mgt2e/adapter.js');
 
   const systemRegistry = getSystemRegistry(logger);
   systemRegistry.register(new DnD5eAdapter());
@@ -1177,6 +1179,7 @@ async function startBackend(): Promise<void> {
   systemRegistry.register(new DSA5Adapter());
   systemRegistry.register(new CosmereRpgAdapter());
   systemRegistry.register(new WFRP4eAdapter());
+  systemRegistry.register(new MGT2eAdapter());
 
   logger.info('System registry initialized', {
     supportedSystems: systemRegistry.getSupportedSystems(),
@@ -1189,6 +1192,7 @@ async function startBackend(): Promise<void> {
   const sceneTools = new SceneTools({ foundryClient, logger });
 
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
+  const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
 
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
 
@@ -1416,6 +1420,7 @@ async function startBackend(): Promise<void> {
     ...sceneTools.getToolDefinitions(),
 
     ...actorCreationTools.getToolDefinitions(),
+    ...actorManagementTools.getToolDefinitions(),
 
     ...dsa5CharacterCreator.getToolDefinitions(),
 
@@ -1588,6 +1593,13 @@ async function startBackend(): Promise<void> {
 
                 case 'wfrp4e-add-items':
                   result = await wfrp4eAddItemsTools.handleAddItems(args);
+
+                  break;
+
+                // Generic actor management (create / update / delete)
+
+                case 'manage-actors':
+                  result = await actorManagementTools.handleManageActors(args);
 
                   break;
 

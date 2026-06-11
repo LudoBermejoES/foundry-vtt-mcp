@@ -27,7 +27,8 @@ export class CharacterTools {
    * Get or detect the game system (cached)
    */
   private async getGameSystem(): Promise<GameSystem> {
-    if (!this.cachedGameSystem) {
+    // Don't cache 'other' — it likely means Foundry wasn't connected yet.
+    if (!this.cachedGameSystem || this.cachedGameSystem === 'other') {
       this.cachedGameSystem = await detectGameSystem(this.foundryClient, this.logger);
     }
     return this.cachedGameSystem;
@@ -147,15 +148,19 @@ export class CharacterTools {
           '- "list": List world-level Items with optional type/folder/name filters.\n' +
           '- "update": Update existing world-level Items by ID. GM-only.\n' +
           '- "add-to-actor": Create and attach Items directly to an existing actor. GM-only.\n' +
-          '- "remove-from-actor": Delete Items already on an actor, identified by itemIds and/or itemNames (optionally constrained by type). GM-only.',
+          '- "remove-from-actor": Delete Items already on an actor, identified by itemIds and/or itemNames (optionally constrained by type). GM-only.\n' +
+          '- "describe": Returns system-specific enum/schema reference for all item field values. ' +
+          'Call this BEFORE creating or updating mgt2e items to get valid enum keys for fields like ' +
+          'weapon.traits, weapon.scale, armour.form, hardware.system, software.class, associate.relationship, etc. ' +
+          'No parameters required beyond action:"describe".',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['create', 'list', 'update', 'add-to-actor', 'remove-from-actor'],
+              enum: ['create', 'list', 'update', 'add-to-actor', 'remove-from-actor', 'describe'],
               description:
-                'Operation to perform: "create" world items, "list" world items, "update" world items by id, "add-to-actor" to attach items to an actor, or "remove-from-actor" to delete items from an actor.',
+                'Operation to perform: "create" world items, "list" world items, "update" world items by id, "add-to-actor" to attach items to an actor, "remove-from-actor" to delete items from an actor, or "describe" to get system-specific enum reference (mgt2e: weapon traits, scales, armour forms, hardware systems, etc.).',
             },
             items: {
               type: 'array',
@@ -664,7 +669,7 @@ export class CharacterTools {
 
   async handleManageWorldItems(args: any): Promise<any> {
     const { action } = z
-      .object({ action: z.enum(['create', 'list', 'update', 'add-to-actor', 'remove-from-actor']) })
+      .object({ action: z.enum(['create', 'list', 'update', 'add-to-actor', 'remove-from-actor', 'describe']) })
       .parse(args);
 
     switch (action) {
@@ -678,6 +683,8 @@ export class CharacterTools {
         return this.handleAddActorItems(args);
       case 'remove-from-actor':
         return this.handleRemoveActorItems(args);
+      case 'describe':
+        return this.handleDescribeSystemSchema();
     }
   }
 
@@ -720,6 +727,16 @@ export class CharacterTools {
       this.logger.error('Failed to remove actor items', error);
       throw new Error(
         `Failed to remove items from "${actorIdentifier}": ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleDescribeSystemSchema(): Promise<any> {
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getSystemSchema', {});
+    } catch (error) {
+      throw new Error(
+        `Failed to get system schema: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

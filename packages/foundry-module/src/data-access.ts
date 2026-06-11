@@ -144,8 +144,25 @@ interface CosmereRpgCreatureIndex {
   img?: string;
 }
 
+interface MGT2eCreatureIndex {
+  id: string;
+  name: string;
+  type: string; // traveller | npc | creature | spacecraft | …
+  pack: string;
+  packLabel: string;
+  hits: number;
+  creatureType: string;
+  hasPsionics: boolean;
+  characteristics: Record<string, { value: number; dm: number }>;
+  img?: string;
+}
+
 // Union type across all supported systems
-type EnhancedCreatureIndex = DnD5eCreatureIndex | PF2eCreatureIndex | CosmereRpgCreatureIndex;
+type EnhancedCreatureIndex =
+  | DnD5eCreatureIndex
+  | PF2eCreatureIndex
+  | CosmereRpgCreatureIndex
+  | MGT2eCreatureIndex;
 
 interface PersistentIndexMetadata {
   version: string;
@@ -603,10 +620,14 @@ class PersistentCreatureIndex {
       return await this.buildDnD5eIndex(force);
     } else if (gameSystem === 'cosmere-rpg') {
       return await this.buildCosmereRpgIndex(force);
+    } else if (gameSystem === 'mgt2e') {
+      return await this.buildMGT2eIndex(force);
     } else {
-      throw new Error(
-        `Enhanced creature index not supported for system: ${gameSystem}. Only D&D 5e, Pathfinder 2e, and Cosmere RPG are currently supported.`
+      // Unknown system — skip silently rather than blocking world load
+      console.warn(
+        `[${this.moduleId}] Enhanced creature index not implemented for system: ${gameSystem}. Skipping.`
       );
+      return [];
     }
   }
 
@@ -1323,6 +1344,142 @@ class PersistentCreatureIndex {
         progressNotification.remove();
       }
     }
+  }
+
+  // ─── mgt2e index builder ────────────────────────────────────────────────────
+
+  private calcMGT2eDM(value: number): number {
+    if (value <= 0) return -3;
+    if (value <= 2) return -2; // matches calcDM() in mcp-server constants.ts
+    if (value <= 5) return -1;
+    if (value <= 8) return 0;
+    if (value <= 11) return 1;
+    if (value <= 14) return 2;
+    return 3;
+  }
+
+  private async buildMGT2eIndex(_force = false): Promise<MGT2eCreatureIndex[]> {
+    this.buildInProgress = true;
+    const startTime = Date.now();
+    let progressNotification: any = null;
+    let totalErrors = 0;
+
+    try {
+      const actorPacks = Array.from(game.packs.values()).filter(
+        pack => pack.metadata.type === 'Actor'
+      );
+      const enhancedCreatures: MGT2eCreatureIndex[] = [];
+      const packFingerprints = new Map<string, PackFingerprint>();
+
+      ui.notifications?.info(
+        `Starting Traveller creature index build from ${actorPacks.length} packs...`
+      );
+
+      for (let i = 0; i < actorPacks.length; i++) {
+        const pack = actorPacks[i];
+        if (!pack.indexed) await pack.getIndex({});
+        packFingerprints.set(pack.metadata.id, this.generatePackFingerprint(pack));
+
+        if (i % 3 === 0) {
+          if (progressNotification) progressNotification.remove();
+          progressNotification = ui.notifications?.info(
+            `Building Traveller index... ${Math.round((i / actorPacks.length) * 100)}% — ${pack.metadata.label}`
+          );
+        }
+
+        try {
+          const result = await this.extractMGT2eDataFromPack(pack);
+          enhancedCreatures.push(...result.creatures);
+          totalErrors += result.errors;
+        } catch (error) {
+          console.warn(`[${this.moduleId}] Failed to process pack ${pack.metadata.label}:`, error);
+        }
+      }
+
+      if (progressNotification) progressNotification.remove();
+
+      const persistentIndex: PersistentEnhancedIndex = {
+        metadata: {
+          version: this.INDEX_VERSION,
+          timestamp: Date.now(),
+          packFingerprints,
+          totalCreatures: enhancedCreatures.length,
+          gameSystem: 'mgt2e',
+        },
+        creatures: enhancedCreatures,
+      };
+
+      await this.savePersistedIndex(persistentIndex);
+
+      const secs = Math.round((Date.now() - startTime) / 1000);
+      const errText = totalErrors > 0 ? ` (${totalErrors} errors)` : '';
+      ui.notifications?.info(
+        `Traveller creature index complete! ${enhancedCreatures.length} actors indexed in ${secs}s${errText}`
+      );
+
+      return enhancedCreatures;
+    } catch (error) {
+      if (progressNotification) progressNotification.remove();
+      const msg = `Failed to build Traveller creature index: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      console.error(`[${this.moduleId}] ${msg}`);
+      ui.notifications?.error(msg);
+      throw error;
+    } finally {
+      this.buildInProgress = false;
+      if (progressNotification) progressNotification.remove();
+    }
+  }
+
+  private async extractMGT2eDataFromPack(
+    pack: any
+  ): Promise<{ creatures: MGT2eCreatureIndex[]; errors: number }> {
+    const creatures: MGT2eCreatureIndex[] = [];
+    let errors = 0;
+
+    try {
+      const documents = await pack.getDocuments();
+      for (const doc of documents) {
+        // Index creature, npc and traveller actor types
+        if (!['creature', 'npc', 'traveller'].includes(doc.type)) continue;
+
+        try {
+          const system = (doc as any).system ?? {};
+          const chars = system.characteristics ?? {};
+          const charMap: Record<string, { value: number; dm: number }> = {};
+          for (const [k, v] of Object.entries(chars)) {
+            const val = typeof v === 'object' ? ((v as any).value ?? 0) : (v as number);
+            charMap[k.toUpperCase()] = { value: val, dm: this.calcMGT2eDM(val) };
+          }
+
+          const hitsMax =
+            typeof system.hits === 'object'
+              ? (system.hits.max ?? system.hits.value ?? 0)
+              : (system.hits ?? 0);
+
+          const hasPsionics = (charMap['PSI']?.value ?? 0) > 0;
+          const creatureType = system.details?.type ?? system.details?.creatureType ?? '';
+
+          creatures.push({
+            id: doc.id,
+            name: doc.name,
+            type: doc.type,
+            pack: pack.collection,
+            packLabel: pack.metadata?.label ?? pack.collection,
+            hits: hitsMax,
+            creatureType,
+            hasPsionics,
+            characteristics: charMap,
+            img: (doc as any).img,
+          });
+        } catch {
+          errors++;
+        }
+      }
+    } catch {
+      errors++;
+    }
+
+    return { creatures, errors };
   }
 
   /**
@@ -2604,13 +2761,22 @@ export class FoundryDataAccess {
 
     for (const pack of packs) {
       try {
-        // Ensure pack index is loaded
-        if (!pack.indexed) {
-          await pack.getIndex({});
+        // Ensure pack index is loaded.
+        // In Foundry v13 getIndex() returns the index Collection; always call it
+        // and use the return value so we don't depend on pack.indexed state.
+        let packIndex: any;
+        try {
+          packIndex = await (pack as any).getIndex({ fields: ['name', 'img', 'type'] });
+        } catch {
+          // Fallback: older Foundry API without fields option
+          packIndex = await (pack as any).getIndex();
         }
 
-        // Use basic compendium index for all searches
-        const entriesToSearch = Array.from(pack.index.values());
+        // Use the returned index if available, otherwise fall back to pack.index
+        const indexSource =
+          packIndex && typeof packIndex.values === 'function' ? packIndex : (pack as any).index;
+
+        const entriesToSearch = Array.from((indexSource as any).values());
 
         for (const entry of entriesToSearch) {
           try {
@@ -2944,9 +3110,10 @@ export class FoundryDataAccess {
       // Sort by power level then name for consistent ordering (system-aware).
       // Power-level dial: tier (cosmere), level (pf2e), challengeRating (dnd5e).
       const powerLevel = (c: EnhancedCreatureIndex): number => {
-        if ('tier' in c) return c.tier;
-        if ('level' in c) return c.level;
-        return c.challengeRating;
+        if ('hits' in c && 'hasPsionics' in c) return (c as MGT2eCreatureIndex).hits;
+        if ('tier' in c) return (c as CosmereRpgCreatureIndex).tier;
+        if ('level' in c) return (c as PF2eCreatureIndex).level;
+        return (c as DnD5eCreatureIndex).challengeRating;
       };
       filteredCreatures.sort((a, b) => {
         const powerA = powerLevel(a);
@@ -2962,8 +3129,9 @@ export class FoundryDataAccess {
 
       // Convert enhanced creatures to result format (system-aware)
       const results = filteredCreatures.map(creature => {
-        const isCosmere = 'tier' in creature;
-        const isPF2e = !isCosmere && 'level' in creature;
+        const isMGT2e = 'hits' in creature && 'hasPsionics' in creature;
+        const isCosmere = !isMGT2e && 'tier' in creature;
+        const isPF2e = !isMGT2e && !isCosmere && 'level' in creature;
 
         const base = {
           id: creature.id,
@@ -2971,12 +3139,26 @@ export class FoundryDataAccess {
           type: creature.type,
           pack: creature.pack,
           packLabel: creature.packLabel,
-          description: creature.description || '',
+          description: (creature as any).description || '',
           hasImage: !!creature.img,
-          creatureType: creature.creatureType,
-          size: creature.size,
-          hitPoints: creature.hitPoints,
+          creatureType: (creature as any).creatureType,
+          size: (creature as any).size,
+          hitPoints: (creature as any).hitPoints,
         };
+
+        if (isMGT2e) {
+          const m = creature as MGT2eCreatureIndex;
+          const strDm = m.characteristics?.STR?.dm ?? 0;
+          const dexDm = m.characteristics?.DEX?.dm ?? 0;
+          return {
+            ...base,
+            hits: m.hits,
+            creatureType: m.creatureType,
+            hasPsionics: m.hasPsionics,
+            characteristics: m.characteristics,
+            summary: `${m.type} — ${m.hits} hits${m.creatureType ? ', ' + m.creatureType : ''} (STR DM${strDm >= 0 ? '+' : ''}${strDm}, DEX DM${dexDm >= 0 ? '+' : ''}${dexDm}) from ${m.packLabel}`,
+          };
+        }
 
         if (isCosmere) {
           const c = creature;
@@ -3075,6 +3257,9 @@ export class FoundryDataAccess {
    * narrowest signal), then pf2e, then fall through to dnd5e.
    */
   private passesEnhancedCriteria(creature: EnhancedCreatureIndex, criteria: any): boolean {
+    if ('hits' in creature && 'hasPsionics' in creature) {
+      return this.passesMGT2eCriteria(creature as MGT2eCreatureIndex, criteria);
+    }
     if ('tier' in creature) {
       return this.passesCosmereRpgCriteria(creature, criteria);
     }
@@ -3082,6 +3267,19 @@ export class FoundryDataAccess {
       return this.passesPF2eCriteria(creature, criteria);
     }
     return this.passesDnD5eCriteria(creature, criteria);
+  }
+
+  /**
+   * MGT2e criteria filter — minHits/maxHits, hasPsionics, creatureType, actorType.
+   */
+  private passesMGT2eCriteria(creature: MGT2eCreatureIndex, criteria: any): boolean {
+    if (criteria.minHits !== undefined && creature.hits < criteria.minHits) return false;
+    if (criteria.maxHits !== undefined && creature.hits > criteria.maxHits) return false;
+    if (criteria.hasPsionics !== undefined && creature.hasPsionics !== criteria.hasPsionics)
+      return false;
+    if (criteria.creatureType && creature.creatureType !== criteria.creatureType) return false;
+    if (criteria.actorType && creature.type !== criteria.actorType) return false;
+    return true;
   }
 
   /**
@@ -4848,6 +5046,121 @@ export class FoundryDataAccess {
       );
       throw error;
     }
+  }
+
+  /**
+   * Get system-specific enum/schema information for the current game system.
+   * Returns valid values for enumerated fields so the LLM can use correct keys
+   * when creating or updating items/actors (e.g. weapon.traits in mgt2e).
+   */
+  getSystemSchema(): Record<string, any> {
+    const systemId = (game as any).system?.id ?? 'unknown';
+
+    if (systemId !== 'mgt2e') {
+      return {
+        system: systemId,
+        message: 'No enum schema available for this system',
+      };
+    }
+
+    const mgt2Config = (CONFIG as any).MGT2;
+    if (!mgt2Config) {
+      return { system: 'mgt2e', message: 'CONFIG.MGT2 not found — system may not be fully loaded' };
+    }
+
+    // ── Weapon traits from live CONFIG.MGT2.WEAPONS.traits ───────────────────
+    const weaponTraitsRaw = mgt2Config.WEAPONS?.traits ?? {};
+    const traitsPersonal: string[] = [];
+    const traitsSpacecraft: string[] = [];
+    const traitsAny: string[] = [];
+    const traitsWithValue: string[] = [];
+
+    for (const [key, val] of Object.entries(weaponTraitsRaw)) {
+      const v = val as any;
+      const scale: string = v.scale ?? 'any';
+      if (scale === 'traveller' || scale === 'vehicle') traitsPersonal.push(key);
+      else if (scale === 'spacecraft') traitsSpacecraft.push(key);
+      else traitsAny.push(key); // no scale restriction
+      if (v.value !== undefined) traitsWithValue.push(key);
+    }
+
+    return {
+      system: 'mgt2e',
+      description:
+        'Enum reference for mgt2e item and actor fields. Use these exact keys — wrong values are silently ignored by the system.',
+      items: {
+        weapon: {
+          'weapon.traits': {
+            description:
+              'Comma-separated string of trait keys. Traits with numeric values use "key N" (e.g. "ap 5, auto 3, stun"). Conflicts: bulky/veryBulky, dangerous/veryDangerous, ap/loPen.',
+            traits_personal_scale: traitsPersonal.sort(),
+            traits_spacecraft_scale: traitsSpacecraft.sort(),
+            traits_any_scale: traitsAny.sort(),
+            traits_requiring_numeric_value: traitsWithValue.sort(),
+            example: 'ap 5, auto 3, scope, stun',
+          },
+          'weapon.scale': ['traveller', 'vehicle', 'spacecraft'],
+          'weapon.characteristic': ['STR', 'DEX', 'END', 'INT', 'EDU', 'SOC'],
+          'weapon.damageType': [
+            'standard',
+            'fire',
+            'cutting',
+            'energy',
+            'laser',
+            'plasma',
+            'meson',
+            'nuclear',
+          ],
+          'weapon.skill':
+            'Format: "skillKey.specialityKey" (e.g. "guncombat.slug", "melee.blade", "heavyweapons.portable")',
+        },
+        armour: {
+          'armour.form': ['standard', 'layered', 'stackable', 'natural'],
+          note: 'stackable: stacks with other stackable armour. layered: can layer under others. natural: creature skin, always worn.',
+        },
+        hardware: {
+          'hardware.system': [
+            'general',
+            'power',
+            'armour',
+            'fuel',
+            'drive',
+            'bridge',
+            'sensor',
+            'computer',
+            'weapon',
+            'defence',
+            'stateroom',
+            'common',
+            'cargo',
+          ],
+          spacecraft_sheet_sections: {
+            'Componentes (coreItems)': ['power', 'armour', 'fuel', 'drive'],
+            'Puente (bridgeItems)': ['bridge', 'sensor', 'computer'],
+            'Armas (weaponItems)': ['weapon', 'defence'],
+            'Habitabilidad (livingItems)': ['stateroom', 'common'],
+            'Carga (cargoItems)': ['cargo'],
+            'General (generalItems)': ['general'],
+          },
+        },
+        software: {
+          'software.class': ['personal', 'ship'],
+          'software.type': ['generic', 'interface', 'bonus'],
+          note: 'class determines which SOFTWARE_EFFECTS apply. type=bonus enables skill/char bonuses.',
+        },
+        associate: {
+          'associate.relationship': ['contact', 'ally', 'rival', 'enemy'],
+        },
+        base: {
+          status: ['equipped', 'carried'],
+          note: 'status is set from MgT2Item.EQUIPPED / MgT2Item.CARRIED constants.',
+        },
+        actor: {
+          'weapon.scale_hint':
+            'When adding a weapon to a spacecraft actor, set weapon.scale="spacecraft" to show in the ship weapons section.',
+        },
+      },
+    };
   }
 
   /**
@@ -9300,6 +9613,322 @@ export class FoundryDataAccess {
       throw error;
     }
   }
+
+  // ─── Generic actor CRUD ─────────────────────────────────────────────────────
+
+  /**
+   * Create one or more actors of any type with arbitrary system data.
+   * Works for any Foundry game system — types and system fields are not validated here.
+   */
+  async createActors(params: {
+    actors: Array<{
+      name: string;
+      type: string;
+      img?: string;
+      system?: Record<string, any>;
+    }>;
+    folder?: string;
+  }): Promise<{ created: Array<{ id: string; name: string; type: string }>; total: number }> {
+    const folderName = params.folder ?? 'Foundry MCP Actors';
+    const folderId = await this.getOrCreateFolder(folderName, 'Actor');
+
+    const gameSystemId = (game as any).system?.id ?? '';
+
+    const docs = params.actors.map(a => {
+      const doc: Record<string, any> = { name: a.name, type: a.type };
+      if (a.img) doc.img = a.img;
+
+      // Merge system data, adding safe defaults for systems that require certain
+      // fields to exist during data preparation (avoids non-fatal init errors).
+      let systemData: Record<string, any> = a.system ?? {};
+
+      if (gameSystemId === 'mgt2e') {
+        // mgt2e's _prepareCreatureData iterates skills.specialities —
+        // ensure skills is at least an empty object to prevent a TypeError.
+        if (!systemData.skills) {
+          systemData = { skills: {}, ...systemData };
+        }
+        // Normalize skill keys to canonical lowercase (e.g. gunCombat → guncombat)
+        // to prevent duplicate entries that the localization system cannot resolve.
+        systemData = this.normalizeMGT2eSkillKeys(systemData);
+
+        // ── mgt2e traveller/npc convenience handling ────────────────────────
+        // When creating a traveller or npc, accept the same shorthand inputs
+        // as the (now-removed) create-mgt2e-traveller tool:
+        //   • Skills shorthand: { pilot: 2 } → { pilot: { value:2, trained:true } }
+        //   • Skill full object: { pilot: { value:0, trained:true, specialities:{...} } }
+        //   • Characteristics: lowercase keys (str/dex/…) normalised to uppercase +
+        //     show:true so they appear on the sheet; hits auto-calculated if omitted
+        //   • Details → sophont: { details: { career, species, … } } remapped to
+        //     system.sophont (system.details does not exist in mgt2e)
+        if (a.type === 'traveller' || a.type === 'npc') {
+          // 1. Skills: add id, auto-populate specialities, set parent value.
+          //    normalizeMGT2eSkillKeys already normalised keys and expanded number shorthands
+          //    to {value, trained}; this step adds the createActors-only extras.
+          const MGT2E_SKILL_SPECS: Record<string, string[]> = {
+            animals: ['handling', 'veterinary', 'training'],
+            art: ['performer', 'holography', 'instrument', 'visualMedia', 'write'],
+            athletics: ['dexterity', 'endurance', 'strength'],
+            drive: ['hovercraft', 'mole', 'track', 'walker', 'wheel'],
+            electronics: ['comms', 'computers', 'remoteOps', 'sensors'],
+            engineer: ['mDrive', 'jDrive', 'lifeSupport', 'power'],
+            flyer: ['airship', 'grav', 'ornithopter', 'rotor', 'wing'],
+            gunner: ['turret', 'ortillery', 'screen', 'capital'],
+            guncombat: ['archaic', 'energy', 'slug'],
+            heavyweapons: ['artillery', 'portable', 'vehicle'],
+            melee: ['unarmed', 'blade', 'bludgeon', 'natural'],
+            pilot: ['smallCraft', 'spacecraft', 'capitalShips'],
+            seafarer: ['oceanShips', 'personal', 'sail', 'submarine'],
+            tactics: ['military', 'naval'],
+          };
+          if (systemData.skills && typeof systemData.skills === 'object') {
+            const normSkills: Record<string, any> = {};
+            for (const [sk, sv] of Object.entries(systemData.skills as Record<string, any>)) {
+              const s =
+                sv && typeof sv === 'object' ? (sv as any) : { value: sv ?? 0, trained: true };
+              normSkills[sk] = { id: sk, value: s.value ?? 0, trained: s.trained ?? true, ...s };
+              // Parent value = min of caller-provided active spec values (before auto-populate).
+              if (s.specialities && typeof s.specialities === 'object') {
+                const activeValues: number[] = [];
+                for (const sd of Object.values(s.specialities as Record<string, any>)) {
+                  const v = Number((sd as any)?.value ?? 0);
+                  if (v > 0) activeValues.push(v);
+                }
+                if (activeValues.length > 0) normSkills[sk].value = Math.min(...activeValues);
+              }
+              // Auto-populate missing specialities (additive only).
+              const defaultSpecs = MGT2E_SKILL_SPECS[sk];
+              if (defaultSpecs) {
+                const existing: Record<string, any> = normSkills[sk].specialities ?? {};
+                const merged: Record<string, any> = { ...existing };
+                for (const specKey of defaultSpecs) {
+                  if (!(specKey in merged)) merged[specKey] = { value: 0, trained: false };
+                }
+                normSkills[sk].specialities = merged;
+              }
+            }
+            systemData = { ...systemData, skills: normSkills };
+          }
+
+          // 2. Characteristics: accept lowercase or uppercase keys,
+          //    ensure show:true, calculate hits from STR+DEX+END if missing.
+          if (systemData.characteristics && typeof systemData.characteristics === 'object') {
+            const normChars: Record<string, any> = {};
+            let str = 7,
+              dex = 7,
+              end = 7;
+            for (const [k, v] of Object.entries(
+              systemData.characteristics as Record<string, any>
+            )) {
+              const uk = k.toUpperCase();
+              let charVal: number;
+              if (typeof v === 'number') {
+                charVal = v;
+                normChars[uk] = { value: charVal, damage: 0, show: true };
+              } else if (v && typeof v === 'object') {
+                charVal = (v as any).value ?? 7;
+                normChars[uk] = { show: true, ...(v as any) };
+                if (normChars[uk].damage === undefined) normChars[uk].damage = 0;
+              } else {
+                charVal = 7;
+                normChars[uk] = { value: charVal, damage: 0, show: true };
+              }
+              if (uk === 'STR') str = charVal;
+              if (uk === 'DEX') dex = charVal;
+              if (uk === 'END') end = charVal;
+            }
+            systemData = { ...systemData, characteristics: normChars };
+            if (!systemData.hits) {
+              const hitsMax = str + dex + end;
+              systemData = { ...systemData, hits: { value: hitsMax, max: hitsMax } };
+            }
+          }
+
+          // 3. Remap system.details → system.sophont (system.details does not exist in mgt2e)
+          if (systemData.details && !systemData.sophont) {
+            const d = systemData.details as any;
+            const sophont: Record<string, any> = {};
+            for (const [k, v] of Object.entries(d)) {
+              if (k === 'career') {
+                sophont.profession = v;
+              } else if (k === 'description') {
+                systemData = { ...systemData, description: v };
+              } else {
+                sophont[k] = v;
+              }
+            }
+            if (Object.keys(sophont).length > 0) systemData = { ...systemData, sophont };
+            const { details: _removed, ...rest } = systemData;
+            systemData = rest;
+          }
+        }
+      }
+
+      // mgt2e software items: the spacecraft sheet reads i.system.software.bandwidth
+      // unconditionally — if the software sub-object is missing the sheet crashes.
+      // Inject safe defaults when the caller didn't supply them.
+      if (a.type === 'software' && gameSystemId === 'mgt2e' && !systemData.software) {
+        systemData = {
+          software: { class: 'spacecraft', type: 'generic', interface: 'none', bandwidth: 0 },
+          ...systemData,
+        };
+      }
+
+      doc.system = systemData;
+      if (folderId) doc.folder = folderId;
+      return doc;
+    });
+
+    const created = await Actor.createDocuments(docs as any[]);
+    if (!created || created.length === 0) {
+      throw new Error('Foundry failed to create actor documents');
+    }
+
+    return {
+      created: (created as any[]).map(a => ({ id: a.id, name: a.name, type: a.type })),
+      total: created.length,
+    };
+  }
+
+  /** Lowercases mgt2e skill keys before createActors processes them. */
+  private normalizeMGT2eSkillKeys(system: Record<string, any>): Record<string, any> {
+    const result: Record<string, any> = {};
+    for (const [key, val] of Object.entries(system)) {
+      if (key === 'skills' && val && typeof val === 'object' && !Array.isArray(val)) {
+        const normalized: Record<string, any> = {};
+        for (const [sk, sv] of Object.entries(val as Record<string, any>)) {
+          normalized[sk.toLowerCase()] = sv;
+        }
+        result['skills'] = normalized;
+      } else if (key.startsWith('skills.-=')) {
+        result[`skills.-=${key.slice('skills.-='.length).toLowerCase()}`] = val;
+      } else if (key.startsWith('skills.')) {
+        const rest = key.slice('skills.'.length);
+        const dotIdx = rest.indexOf('.');
+        const lk =
+          dotIdx === -1
+            ? rest.toLowerCase()
+            : rest.substring(0, dotIdx).toLowerCase() + rest.substring(dotIdx);
+        result[`skills.${lk}`] = val;
+      } else {
+        result[key] = val;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Update one or more existing actors by ID.
+   * Merges supplied fields into the actor (top-level keys overwrite).
+   */
+  async updateActors(
+    updates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
+  ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
+    const updatedActors: Array<{ id: string; name: string }> = [];
+
+    for (const u of updates) {
+      const actor = game.actors.get(u.id) as any;
+      if (!actor) throw new Error(`Actor not found: ${u.id}`);
+
+      const patch: Record<string, any> = {};
+      if (u.name !== undefined) patch.name = u.name;
+      if (u.img !== undefined) patch.img = u.img;
+      if (u.system !== undefined) {
+        // Build a single patch.system nested object so Foundry deep-merges everything
+        // in one pass without flat-key vs nested-key conflicts.
+        // Dot-notation keys (e.g. "crewed.passengers.-=actorId") are expanded to their
+        // nested equivalent — Foundry's mergeObject honours the "-=" deletion operator
+        // at any depth in a nested object, just as it does with top-level flat keys.
+        const systemPatch: Record<string, any> = {};
+        for (const [key, val] of Object.entries(u.system)) {
+          if (key.includes('.')) {
+            const parts = key.split('.');
+            let cur = systemPatch;
+            for (let i = 0; i < parts.length - 1; i++) {
+              if (!(parts[i] in cur)) cur[parts[i]] = {};
+              cur = cur[parts[i]];
+            }
+            cur[parts[parts.length - 1]] = val;
+          } else {
+            systemPatch[key] = val;
+          }
+        }
+        patch.system = systemPatch;
+      }
+
+      await actor.update(patch);
+      updatedActors.push({ id: actor.id, name: u.name ?? actor.name });
+    }
+
+    return { updated: updatedActors, total: updatedActors.length };
+  }
+
+  /**
+   * Update one or more items embedded in an actor.
+   */
+  async updateActorItems(
+    actorIdentifier: string,
+    itemUpdates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
+  ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
+    const actor =
+      (game.actors.get(actorIdentifier) as any) ??
+      (game.actors.find(
+        (a: any) => a.name?.toLowerCase() === actorIdentifier.toLowerCase()
+      ) as any);
+    if (!actor) throw new Error(`Actor not found: ${actorIdentifier}`);
+
+    const updated: Array<{ id: string; name: string }> = [];
+
+    for (const u of itemUpdates) {
+      const item = actor.items.get(u.id) as any;
+      if (!item) throw new Error(`Item ${u.id} not found on actor "${actor.name}"`);
+
+      const patch: Record<string, any> = {};
+      if (u.name !== undefined) patch.name = u.name;
+      if (u.img !== undefined) patch.img = u.img;
+      if (u.system !== undefined) patch.system = u.system;
+
+      await item.update(patch);
+      updated.push({ id: item.id, name: u.name ?? item.name });
+    }
+
+    return { updated, total: updated.length };
+  }
+
+  /**
+   * Delete one or more items embedded in an actor.
+   */
+  async deleteActorItems(
+    actorIdentifier: string,
+    itemIds: string[]
+  ): Promise<{ deleted: string[]; total: number }> {
+    const actor =
+      (game.actors.get(actorIdentifier) as any) ??
+      (game.actors.find(
+        (a: any) => a.name?.toLowerCase() === actorIdentifier.toLowerCase()
+      ) as any);
+    if (!actor) throw new Error(`Actor not found: ${actorIdentifier}`);
+
+    const existing = itemIds.filter(id => actor.items.get(id));
+    if (existing.length === 0)
+      throw new Error('None of the provided item IDs were found on this actor');
+
+    await actor.deleteEmbeddedDocuments('Item', existing);
+    return { deleted: existing, total: existing.length };
+  }
+
+  /**
+   * Delete one or more actors by ID.
+   */
+  async deleteActors(ids: string[]): Promise<{ deleted: string[]; total: number }> {
+    const existing = ids.filter(id => game.actors.get(id));
+    if (existing.length === 0) throw new Error('None of the provided actor IDs were found');
+
+    await Actor.deleteDocuments(existing);
+    return { deleted: existing, total: existing.length };
+  }
+
+  // ─── mgt2e ──────────────────────────────────────────────────────────────────
 }
 
 // =============================================================================
