@@ -1,13 +1,13 @@
 /**
- * Tests for mgt2e skill normalisation in the manage-actors tool.
+ * Tests for mgt2e skill normalisation.
  *
- * The `normalizeMGT2eSkillsInSystem` function runs on the MCP server (Node.js)
- * before data is sent to Foundry, working around Electron's persistent ES-module
- * cache that prevented browser-side normalisation from taking effect.
+ * `normalizeMGT2eSkillsInSystem` runs on the MCP server (Node.js) before data
+ * is sent to Foundry, working around Electron's persistent ES-module cache that
+ * prevented browser-side normalisation from taking effect.
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeMGT2eSkillsInSystem, MGT2E_SKILL_SPECS } from '../systems/mgt2e/normalize.js';
+import { normalizeMGT2eSkillsInSystem, MGT2E_SKILL_SPECS } from './normalize.js';
 
 // ─── MGT2E_SKILL_SPECS sanity ──────────────────────────────────────────────
 
