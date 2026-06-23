@@ -369,8 +369,4 @@ export class WFRP4eAdapter implements SystemAdapter {
     }
     return undefined;
   }
-
-  normalizePayload(system: Record<string, any>): Record<string, any> {
-    return system;
-  }
 }

@@ -389,8 +389,4 @@ export class DSA5Adapter implements SystemAdapter {
 
     return stats;
   }
-
-  normalizePayload(system: Record<string, any>): Record<string, any> {
-    return system;
-  }
 }

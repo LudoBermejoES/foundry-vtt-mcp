@@ -242,9 +242,9 @@ export class ActorManagementTools {
     });
 
     const adapter = await this.getAdapter();
-    const normalizedActors = adapter
+    const normalizedActors = adapter?.normalizePayload
       ? actors.map(a =>
-          a.system !== undefined ? { ...a, system: adapter.normalizePayload(a.system) } : a
+          a.system !== undefined ? { ...a, system: adapter.normalizePayload!(a.system) } : a
         )
       : actors;
 
@@ -277,9 +277,9 @@ export class ActorManagementTools {
     this.logger.info('Updating actors', { count: updates.length });
 
     const adapter = await this.getAdapter();
-    const normalizedUpdates = adapter
+    const normalizedUpdates = adapter?.normalizePayload
       ? updates.map(u =>
-          u.system !== undefined ? { ...u, system: adapter.normalizePayload(u.system) } : u
+          u.system !== undefined ? { ...u, system: adapter.normalizePayload!(u.system) } : u
         )
       : updates;
 

@@ -165,7 +165,7 @@ export interface SystemAdapter {
    * @param system - Raw system data from the MCP caller
    * @returns Normalised system data ready for Foundry
    */
-  normalizePayload(system: Record<string, any>): Record<string, any>;
+  normalizePayload?(system: Record<string, any>): Record<string, any>;
 }
 
 /**
