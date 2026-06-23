@@ -357,4 +357,8 @@ export class PF2eAdapter implements SystemAdapter {
 
     return stats;
   }
+
+  normalizePayload(system: Record<string, any>): Record<string, any> {
+    return system;
+  }
 }

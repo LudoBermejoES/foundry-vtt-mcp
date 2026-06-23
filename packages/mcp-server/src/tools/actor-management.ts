@@ -13,155 +13,32 @@
 import { z } from 'zod';
 import { FoundryClient } from '../foundry-client.js';
 import { Logger } from '../logger.js';
+import { SystemRegistry } from '../systems/system-registry.js';
 import { detectGameSystem } from '../utils/system-detection.js';
-
-// ── mgt2e skill normalisation ─────────────────────────────────────────────────
-
-/**
- * Skills that have named specialities in mgt2e.
- * The first entry in each array is the *primary* speciality used when expanding
- * a bare number shorthand (e.g. `{ pilot: 2 }`).
- */
-export const MGT2E_SKILL_SPECS: Record<string, string[]> = {
-  animals: ['handling', 'vetinary', 'training'], // 'vetinary' is the module's own spelling
-  art: ['performer', 'holography', 'instrument', 'visualMedia', 'write'],
-  athletics: ['dexterity', 'endurance', 'strength'],
-  drive: ['hovercraft', 'mole', 'track', 'walker', 'wheel'],
-  electronics: ['comms', 'computers', 'remoteOps', 'sensors'],
-  engineer: ['mDrive', 'jDrive', 'lifeSupport', 'power'],
-  flyer: ['airship', 'grav', 'ornithopter', 'rotor', 'wing'],
-  gunner: ['turret', 'ortillery', 'screen', 'capital'],
-  guncombat: ['archaic', 'energy', 'slug'],
-  heavyweapons: ['artillery', 'portable', 'vehicle'],
-  language: ['galanglic', 'vilani', 'zdetl', 'oynprith', 'trokh', 'gvegh'],
-  melee: ['unarmed', 'blade', 'bludgeon', 'natural'],
-  pilot: ['smallCraft', 'spacecraft', 'capitalShips'],
-  profession: [
-    'belter',
-    'biologicals',
-    'civilEngineering',
-    'construction',
-    'hydroponics',
-    'polymers',
-    'robotics',
-  ],
-  science: [
-    'archaeology',
-    'astronomy',
-    'biology',
-    'chemistry',
-    'cosmology',
-    'cybernetics',
-    'economics',
-    'genetics',
-    'history',
-    'linquistics',
-    'philosophy',
-    'physics',
-    'planetology',
-    'psionicology',
-    'psychology',
-    'robotics',
-    'sophontology',
-    'xenology',
-  ],
-  seafarer: ['oceanShips', 'personal', 'sail', 'submarine'],
-  tactics: ['military', 'naval'],
-};
-
-/**
- * Normalize mgt2e skill keys and expand shorthands before sending to Foundry.
- *
- * Runs server-side (Node.js) so it's never affected by browser module cache.
- *
- * SIMPLE SKILLS (admin, carouse, stealth, …):
- *   mgt2e DataModel requires `id` to store value; otherwise level stays 0.
- *   `{ admin: 3 }`          →  `{ id:'admin', value:3, trained:true }`
- *   `{ admin: {value:3} }`  →  `{ id:'admin', value:3 }`
- *
- * SPEC-SKILLS (guncombat, pilot, heavyweapons, …):
- *   _prepareDerivedData() overrides parent.value with min(active spec values).
- *   Number shorthand sets parent value AND the primary speciality.
- *   `{ pilot: 2 }`  →  `{ value:2, trained:true, specialities:{ smallCraft:{value:2,trained:true} } }`
- *   Object with specialities: spread-merged (adding id would corrupt the DataModel).
- *   Object without specialities: id injected so simple-skill level persists.
- */
-export function normalizeMGT2eSkillsInSystem(system: Record<string, any>): Record<string, any> {
-  const normalizeSpecValues = (specs: Record<string, any>): Record<string, any> => {
-    const result: Record<string, any> = {};
-    for (const [k, v] of Object.entries(specs)) {
-      result[k] = typeof v === 'number' ? { value: v, trained: v > 0 } : v;
-    }
-    return result;
-  };
-
-  const normalizeSkillEntry = (sk: string, sv: any): any => {
-    const defaultSpecs = MGT2E_SKILL_SPECS[sk];
-    const isSpecSkill = defaultSpecs !== undefined;
-    if (typeof sv === 'number') {
-      if (isSpecSkill) {
-        // Set both the parent stored value AND the primary spec.
-        // mgt2e displays the stored parent value; no id to avoid DataModel corruption.
-        return {
-          value: sv,
-          trained: sv > 0,
-          specialities: { [defaultSpecs[0]]: { value: sv, trained: sv > 0 } },
-        };
-      } else {
-        return { id: sk, value: sv, trained: sv > 0 };
-      }
-    } else if (sv && typeof sv === 'object') {
-      if (sv.specialities && typeof sv.specialities === 'object') {
-        return { ...sv, specialities: normalizeSpecValues(sv.specialities) };
-      } else {
-        return { id: (sv as any).id ?? sk, ...sv };
-      }
-    }
-    return sv;
-  };
-
-  const result: Record<string, any> = {};
-  for (const [key, val] of Object.entries(system)) {
-    if (key === 'skills' && val && typeof val === 'object' && !Array.isArray(val)) {
-      const normalized: Record<string, any> = {};
-      for (const [sk, sv] of Object.entries(val as Record<string, any>)) {
-        const lk = sk.toLowerCase();
-        normalized[lk] = normalizeSkillEntry(lk, sv);
-      }
-      result['skills'] = normalized;
-    } else if (key.startsWith('skills.-=')) {
-      result[`skills.-=${key.slice('skills.-='.length).toLowerCase()}`] = val;
-    } else if (key.startsWith('skills.')) {
-      const rest = key.slice('skills.'.length);
-      const dotIdx = rest.indexOf('.');
-      if (dotIdx === -1) {
-        result[`skills.${rest.toLowerCase()}`] = val;
-      } else {
-        const skillKey = rest.substring(0, dotIdx).toLowerCase();
-        const subPath = rest.substring(dotIdx);
-        result[`skills.${skillKey}${subPath}`] = val;
-      }
-    } else {
-      result[key] = val;
-    }
-  }
-  return result;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ActorManagementToolsOptions {
   foundryClient: FoundryClient;
   logger: Logger;
+  systemRegistry?: SystemRegistry;
 }
 
 export class ActorManagementTools {
   private foundryClient: FoundryClient;
   private logger: Logger;
+  private systemRegistry: SystemRegistry | null;
 
-  constructor({ foundryClient, logger }: ActorManagementToolsOptions) {
+  constructor({ foundryClient, logger, systemRegistry }: ActorManagementToolsOptions) {
     this.foundryClient = foundryClient;
     this.logger = logger.child({ component: 'ActorManagementTools' });
+    this.systemRegistry = systemRegistry ?? null;
+  }
+
+  private async getAdapter() {
+    if (!this.systemRegistry) return null;
+    const gameSystem = await detectGameSystem(this.foundryClient, this.logger);
+    return this.systemRegistry.getAdapter(gameSystem);
   }
 
   getToolDefinitions() {
@@ -171,54 +48,22 @@ export class ActorManagementTools {
         description:
           'Create, update, or delete Actor documents in Foundry VTT. Works with any game system.\n' +
           '- "create": Create one or more actors of any type with arbitrary system data.\n' +
-          '  mgt2e valid actor types: traveller, npc, creature, spacecraft, vehicle, world, package, swarm.\n' +
           '- "update": Update one or more existing actors by ID. Merges into existing system data.\n' +
           '- "delete": Permanently delete one or more actors by ID.\n' +
-          '\n' +
-          'mgt2e DATA MODEL NOTES:\n' +
-          '• Characteristics for traveller/npc — two formats accepted:\n' +
-          '  Full: { STR:{value:8,show:true}, DEX:{value:9,show:true}, ... } (show:true added automatically)\n' +
-          '  Shorthand: { str:8, dex:9, end:7, int:8, edu:10, soc:7 } — uppercase + show:true applied automatically.\n' +
-          '  Hits (STR+DEX+END) are calculated automatically if omitted.\n' +
-          '• Skills for traveller/npc — two formats accepted:\n' +
-          '  Shorthand: { pilot:2, medic:1 } — sets level, marks as trained automatically.\n' +
-          '  Full: { pilot:{value:0,trained:true,specialities:{spacecraft:{value:2,trained:true}}} }\n' +
-          '• Personal details live at system.sophont (NOT system.details — that path does not exist):\n' +
-          '  { sophont: { species:"Human", gender:"M", age:34, profession:"Navy", homeworld:"Regina" } }\n' +
-          '  Shorthand: system.details:{species,gender,age,career,homeworld} is remapped to sophont automatically.\n' +
-          '• Creature behaviour: system.behaviour = "carnivore pouncer" (space-separated lowercase keys)\n' +
-          '  Valid keys: herbivore, omnivore, carnivore, scavenger, pouncer, chaser, killer, siren, etc.\n' +
-          '• Creature traits: system.traits = "camouflaged, tough, flyer 3" (comma-separated string)\n' +
-          '\n' +
-          'mgt2e ITEM RESTRICTIONS (what can go on which actor type):\n' +
-          '• traveller: weapon, armour, augment, term, associate, item, software — NOT cargo/hardware/role/worlddata\n' +
-          '• npc: weapon, armour, augment, item, software — NOT term/associate/cargo/hardware/role/worlddata\n' +
-          '• creature: weapon, armour, augment, item, software — NOT term/associate/cargo/hardware/role/worlddata\n' +
-          '• spacecraft: weapon, armour, augment, cargo, hardware, role, software, item — NOT term/associate/worlddata\n' +
-          '• world: cargo, item, software, worlddata — NOT term/associate/role\n' +
-          'NOTE: term and associate items are ONLY valid on traveller actors (not npc/creature).\n' +
-          '\n' +
-          'mgt2e HARDWARE ITEMS (for spacecraft):\n' +
-          '  hardware.system discriminators: "drive" (j/m/r), "power", "bridge", "sensor", "armour",\n' +
-          '    "weapon", "cargo", "stateroom", "fuel", "computer", "general"\n' +
-          '  For correct tonnage display include: hardware.tonnage.tonCalc and hardware.tonnage.costCalc\n' +
-          '  Ship weapon items need weapon.scale:"spacecraft" and weapon.power field.\n' +
-          '\n' +
-          'mgt2e SOFTWARE ITEMS — REQUIRED sub-object or the spacecraft sheet crashes:\n' +
-          '  system: { software: { class:"spacecraft", type:"generic", interface:"none", bandwidth:N } }\n' +
-          '  Bandwidth by type: Maneuver/0→0, Library/0→0, Jump Control/N→N*5,\n' +
-          '    Fire Control/N→N*5, Auto-Repair/N→N*5, Evade/N→N*5.',
+          '- "update-items": Update embedded items on an actor by item ID.\n' +
+          '- "delete-items": Delete embedded items from an actor by item ID.\n' +
+          '- "describe": Return system-specific actor schema notes (actor types, item restrictions,\n' +
+          '  field paths, skill shorthands). Call this before creating actors in an unfamiliar system.',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['create', 'update', 'delete', 'update-items', 'delete-items'],
+              enum: ['create', 'update', 'delete', 'update-items', 'delete-items', 'describe'],
               description:
-                'Operation to perform.\n' +
-                '- "create" / "update" / "delete": actor-level CRUD.\n' +
-                '- "update-items": update one or more items embedded in an actor (by item ID).\n' +
-                '- "delete-items": permanently delete embedded items from an actor.',
+                'Operation to perform: "create" / "update" / "delete" actors, ' +
+                '"update-items" / "delete-items" for embedded items, ' +
+                'or "describe" to get system-specific schema notes.',
             },
             // ── create ──────────────────────────────────────────────────────
             actors: {
@@ -247,12 +92,7 @@ export class ActorManagementTools {
                   system: {
                     type: 'object',
                     description:
-                      'System-specific data. Free-form object — whatever fields the system accepts.\n' +
-                      'mgt2e traveller examples:\n' +
-                      '  characteristics: { STR:{value:8,show:true}, DEX:{value:9,show:true}, END:{value:7,show:true}, INT:{value:8,show:true}, EDU:{value:10,show:true}, SOC:{value:7,show:true} }\n' +
-                      '  skills: { pilot:{value:2,trained:true}, medic:{value:1,trained:true} }\n' +
-                      '  sophont: { species:"Human", profession:"Navy", age:34, homeworld:"Regina" }\n' +
-                      'Skill with speciality: { engineer:{value:0,trained:true,specialities:{jDrive:{value:2,trained:true}}} }',
+                      'System-specific data. Free-form object — use action:"describe" to get valid field names for the active system.',
                     additionalProperties: true,
                   },
                 },
@@ -292,7 +132,7 @@ export class ActorManagementTools {
                     description:
                       'System-specific fields to update. Merged into the existing system data ' +
                       '(top-level keys only — nested objects replace, not merge). ' +
-                      'Examples for mgt2e: { characteristics: {...}, skills: {...}, details: {...} }',
+                      'Use action:"describe" to get valid field names for the active system.',
                     additionalProperties: true,
                   },
                 },
@@ -327,10 +167,7 @@ export class ActorManagementTools {
                   system: {
                     type: 'object',
                     additionalProperties: true,
-                    description:
-                      'System fields to update. Passed directly to Foundry — use the exact ' +
-                      'field names the system expects. For mgt2e hardware use the "hardware" sub-object ' +
-                      '(e.g. { hardware: { system: "drive", tons: 25, rating: 2, mount: "none", ... } })',
+                    description: 'System fields to update. Passed directly to Foundry.',
                   },
                 },
                 required: ['id'],
@@ -353,7 +190,7 @@ export class ActorManagementTools {
   async handleManageActors(args: any): Promise<any> {
     const { action } = z
       .object({
-        action: z.enum(['create', 'update', 'delete', 'update-items', 'delete-items']),
+        action: z.enum(['create', 'update', 'delete', 'update-items', 'delete-items', 'describe']),
       })
       .parse(args);
 
@@ -368,7 +205,16 @@ export class ActorManagementTools {
         return this.handleUpdateItems(args);
       case 'delete-items':
         return this.handleDeleteItems(args);
+      case 'describe':
+        return this.handleDescribe();
     }
+  }
+
+  private async handleDescribe(): Promise<any> {
+    const adapter = await this.getAdapter();
+    const notes = adapter?.describeActorSchema?.();
+    if (notes) return { schema: notes };
+    return { schema: 'No system-specific actor schema notes available for the active system.' };
   }
 
   // ── create ────────────────────────────────────────────────────────────────
@@ -395,8 +241,15 @@ export class ActorManagementTools {
       types: actors.map(a => a.type),
     });
 
+    const adapter = await this.getAdapter();
+    const normalizedActors = adapter
+      ? actors.map(a =>
+          a.system !== undefined ? { ...a, system: adapter.normalizePayload(a.system) } : a
+        )
+      : actors;
+
     const result = await this.foundryClient.query('foundry-mcp-bridge.createActors', {
-      actors,
+      actors: normalizedActors,
       folder,
     });
 
@@ -423,14 +276,12 @@ export class ActorManagementTools {
 
     this.logger.info('Updating actors', { count: updates.length });
 
-    // mgt2e: normalize skill keys server-side to avoid Electron module cache issues
-    const gameSystem = await detectGameSystem(this.foundryClient, this.logger);
-    const normalizedUpdates =
-      gameSystem === 'mgt2e'
-        ? updates.map(u =>
-            u.system !== undefined ? { ...u, system: normalizeMGT2eSkillsInSystem(u.system) } : u
-          )
-        : updates;
+    const adapter = await this.getAdapter();
+    const normalizedUpdates = adapter
+      ? updates.map(u =>
+          u.system !== undefined ? { ...u, system: adapter.normalizePayload(u.system) } : u
+        )
+      : updates;
 
     const result = await this.foundryClient.query('foundry-mcp-bridge.updateActors', {
       updates: normalizedUpdates,

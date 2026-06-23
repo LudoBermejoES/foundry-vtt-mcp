@@ -1192,7 +1192,7 @@ async function startBackend(): Promise<void> {
   const sceneTools = new SceneTools({ foundryClient, logger });
 
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
-  const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
+  const actorManagementTools = new ActorManagementTools({ foundryClient, logger, systemRegistry });
 
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
 

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeMGT2eSkillsInSystem, MGT2E_SKILL_SPECS } from './actor-management.js';
+import { normalizeMGT2eSkillsInSystem, MGT2E_SKILL_SPECS } from '../systems/mgt2e/normalize.js';
 
 // ─── MGT2E_SKILL_SPECS sanity ──────────────────────────────────────────────
 

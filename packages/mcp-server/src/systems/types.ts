@@ -143,6 +143,29 @@ export interface SystemAdapter {
    * @returns Object merged into the get-character response's basicInfo
    */
   extractBasicInfo?(actorData: any): any;
+
+  /**
+   * Return system-specific actor schema notes for the manage-actors "describe" action.
+   *
+   * Optional: if not implemented, manage-actors describe returns a generic message.
+   * mgt2e implements this to surface actor types, item restrictions, skill shorthands, etc.
+   */
+  describeActorSchema?(): string;
+
+  /**
+   * Normalize a system-data payload before it is sent to Foundry.
+   *
+   * Called by manage-actors on every create/update so each system can
+   * pre-process its own field shorthands, key casing, or DataModel quirks
+   * without polluting shared tool code.
+   *
+   * The default implementation (for systems with no special needs) is a
+   * no-op that returns the payload unchanged.
+   *
+   * @param system - Raw system data from the MCP caller
+   * @returns Normalised system data ready for Foundry
+   */
+  normalizePayload(system: Record<string, any>): Record<string, any>;
 }
 
 /**

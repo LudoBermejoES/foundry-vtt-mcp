@@ -17,6 +17,7 @@ import {
   type MGT2eFilters,
 } from './filters.js';
 import { CHARACTERISTIC_NAMES, ACTOR_TYPES, calcDM } from './constants.js';
+import { normalizeMGT2eSkillsInSystem } from './normalize.js';
 
 export class MGT2eAdapter implements SystemAdapter {
   getMetadata(): SystemMetadata {
@@ -285,5 +286,54 @@ export class MGT2eAdapter implements SystemAdapter {
     basicInfo.actorType = actorType;
 
     return basicInfo;
+  }
+
+  describeActorSchema(): string {
+    return [
+      '=== mgt2e Actor Schema Reference ===',
+      '',
+      'ACTOR TYPES: traveller, npc, creature, spacecraft, vehicle, world, package, swarm',
+      '',
+      'CHARACTERISTICS (traveller/npc) — system.characteristics:',
+      '  Full:      { STR:{value:8,show:true}, DEX:{value:9,show:true}, ... }',
+      '  Shorthand: { str:8, dex:9, end:7, int:8, edu:10, soc:7 }  (uppercase + show:true auto-applied)',
+      '  Hits (STR+DEX+END) calculated automatically when omitted.',
+      '',
+      'SKILLS (traveller/npc) — system.skills:',
+      '  Shorthand: { pilot:2, medic:1 }  (trained flag set automatically)',
+      '  Full:      { pilot:{value:0,trained:true,specialities:{spacecraft:{value:2,trained:true}}} }',
+      '  Spec-skills: animals, art, athletics, drive, electronics, engineer, flyer, gunner,',
+      '    guncombat, heavyweapons, language, melee, pilot, profession, science, seafarer, tactics',
+      '',
+      'SOPHONT DETAILS (traveller/npc) — system.sophont:',
+      '  { species:"Human", gender:"M", age:34, profession:"Navy", homeworld:"Regina" }',
+      '  Note: path is sophont, NOT details (system.details does not exist in mgt2e)',
+      '',
+      'CREATURE FIELDS:',
+      '  system.behaviour: "carnivore pouncer"  (space-separated; see MGT2.CREATURES.behaviours)',
+      '  system.traits:    "camouflaged, tough, flyer 3"  (comma-separated string)',
+      '',
+      'ITEM RESTRICTIONS (what can go on each actor type):',
+      '  traveller:  weapon, armour, augment, term, associate, item, software',
+      '  npc:        weapon, armour, augment, item, software  (NO term/associate)',
+      '  creature:   weapon, armour, augment, item, software  (NO term/associate)',
+      '  spacecraft: weapon, armour, augment, cargo, hardware, role, software, item',
+      '  world:      cargo, item, software, worlddata',
+      '',
+      'HARDWARE ITEMS (spacecraft) — hardware.system discriminators:',
+      '  "drive", "power", "bridge", "sensor", "armour", "weapon",',
+      '  "cargo", "stateroom", "fuel", "computer", "general"',
+      '  Include hardware.tonnage.tonCalc and hardware.tonnage.costCalc for correct display.',
+      '  Ship weapons need weapon.scale:"spacecraft" and a weapon.power field.',
+      '',
+      'SOFTWARE ITEMS — required sub-object (sheet crashes without it):',
+      '  { software: { class:"spacecraft", type:"generic", interface:"none", bandwidth:N } }',
+      '  Bandwidth: Maneuver/0→0, Library/0→0, Jump Control/N→N×5,',
+      '    Fire Control/N→N×5, Auto-Repair/N→N×5, Evade/N→N×5',
+    ].join('\n');
+  }
+
+  normalizePayload(system: Record<string, any>): Record<string, any> {
+    return normalizeMGT2eSkillsInSystem(system);
   }
 }
