@@ -15,6 +15,7 @@ export type {
   PF2eCreatureIndex,
   DSA5CreatureIndex,
   WFRP4eCreatureIndex,
+  MGT2eCreatureIndex,
   GenericCreatureIndex,
   AnyCreatureIndex,
 } from './types.js';

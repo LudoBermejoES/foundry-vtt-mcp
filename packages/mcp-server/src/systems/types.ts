@@ -11,7 +11,7 @@ import { z } from 'zod';
  * Supported game system identifiers
  * Extend this type when adding new systems
  */
-export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'cosmere-rpg' | 'wfrp4e' | 'other';
+export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'cosmere-rpg' | 'wfrp4e' | 'mgt2e' | 'other';
 
 /**
  * System metadata returned by adapters
@@ -143,6 +143,29 @@ export interface SystemAdapter {
    * @returns Object merged into the get-character response's basicInfo
    */
   extractBasicInfo?(actorData: any): any;
+
+  /**
+   * Return system-specific actor schema notes for the manage-actors "describe" action.
+   *
+   * Optional: if not implemented, manage-actors describe returns a generic message.
+   * mgt2e implements this to surface actor types, item restrictions, skill shorthands, etc.
+   */
+  describeActorSchema?(): string;
+
+  /**
+   * Normalize a system-data payload before it is sent to Foundry.
+   *
+   * Called by manage-actors on every create/update so each system can
+   * pre-process its own field shorthands, key casing, or DataModel quirks
+   * without polluting shared tool code.
+   *
+   * The default implementation (for systems with no special needs) is a
+   * no-op that returns the payload unchanged.
+   *
+   * @param system - Raw system data from the MCP caller
+   * @returns Normalised system data ready for Foundry
+   */
+  normalizePayload?(system: Record<string, any>): Record<string, any>;
 }
 
 /**
@@ -299,6 +322,23 @@ export interface WFRP4eCreatureIndex extends SystemCreatureIndex {
 }
 
 /**
+ * Mongoose Traveller 2e specific creature index structure
+ */
+export interface MGT2eCreatureIndex extends SystemCreatureIndex {
+  system: 'mgt2e';
+  systemData: {
+    /** Max hits (proxy for power level) */
+    hits?: number;
+    /** Broad creature category (animal, humanoid, alien, etc.) */
+    creatureType?: string;
+    /** True if PSI characteristic > 0 */
+    hasPsionics?: boolean;
+    /** Core characteristics snapshot — value + DM */
+    characteristics?: Record<string, { value: number; dm: number }>;
+  };
+}
+
+/**
  * Generic creature index for unsupported systems
  */
 export interface GenericCreatureIndex extends SystemCreatureIndex {
@@ -315,4 +355,5 @@ export type AnyCreatureIndex =
   | DSA5CreatureIndex
   | CosmereRpgCreatureIndex
   | WFRP4eCreatureIndex
+  | MGT2eCreatureIndex
   | GenericCreatureIndex;

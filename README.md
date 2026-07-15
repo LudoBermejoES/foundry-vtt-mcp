@@ -1,6 +1,6 @@
 # Foundry VTT MCP Bridge
 
-Connect Foundry VTT to Claude Desktop for AI-powered campaign management through the Model Context Protocol (MCP). It currently supports Dungeons and Dragons Fifth Edition, Pathfinder Second Edition, Das Schwarze Augen Fifth Edition, Cosmere RPG System, & Warhammer Fantasy Roleplay 4th Edition. The majority of MCP tools are system agnostic or have features that are aware of the system it is working with, excluding some DSA 5 specific tools.
+Connect Foundry VTT to Claude Desktop for AI-powered campaign management through the Model Context Protocol (MCP). It currently supports Dungeons and Dragons Fifth Edition, Pathfinder Second Edition, Das Schwarze Augen Fifth Edition, Cosmere RPG System, Warhammer Fantasy Roleplay 4th Edition, & Mongoose Traveller 2nd Edition. The majority of MCP tools are system agnostic or have features that are aware of the system it is working with, excluding some DSA 5 specific tools.
 
 ## Overview
 
@@ -113,9 +113,11 @@ Once connected, ask Claude Desktop:
 
 ## Features
 
-- **42 MCP Tools** that allow Claude to interact with Foundry
+- **43 MCP Tools** that allow Claude to interact with Foundry
 - **D&D 5e NPC Creation Suite**: Build complete NPCs from prompts — stat block, attacks, saves, auras, and spellcasting
+- **Mongoose Traveller 2e (mgt2e) Support**: Full actor lifecycle — create/update/delete travellers, NPCs, creatures, and spacecraft with skill shorthand normalisation; creature compendium index with characteristic DMs; weapon-trait enum reference
 - **WFRP4e Support**: Character reading plus editing — update characteristics, wounds, skills and careers, and add or remove items on existing actors
+- **Generic Actor CRUD**: `manage-actors` creates, updates, and deletes actors of any type on any system; also updates and deletes embedded items
 - **Character Management**: Access stats, abilities, inventory, and detailed entity information
 - **Token Manipulation**: Move, update, delete tokens and manage status conditions
 - **Enhanced Compendium Search**: Instant filtering by CR, type, abilities, and more
@@ -167,10 +169,11 @@ Once connected, ask Claude Desktop:
 - **34** list-dsa5-archetypes (DSA5 Only)
 - **35** create-dsa5-character-from-archetype (DSA5 Only)
 - **36** create-campaign-dashboard
-- **37** manage-world-items (create / list / update world items, add items to actor)
+- **37** manage-world-items (create / list / update world items, add items to actor, describe system enum schema)
 - **38** dnd5e-create-npc (D&D 5e Only)
 - **39** dnd5e-add-feature (D&D 5e Only)
 - **40** dnd5e-add-features-from-compendium (D&D 5e Only)
+- **41** manage-actors (create / update / delete actors; update / delete embedded items — any system)
 
 ## Settings
 

@@ -11,7 +11,7 @@ import { Logger } from '../logger.js';
 /**
  * Supported game systems
  */
-export type GameSystem = 'dnd5e' | 'pf2e' | 'cosmere-rpg' | 'other';
+export type GameSystem = 'dnd5e' | 'pf2e' | 'cosmere-rpg' | 'mgt2e' | 'other';
 
 /**
  * Cache for system detection (avoid repeated queries)
@@ -33,7 +33,11 @@ export async function detectGameSystem(
 
   try {
     const worldInfo = await foundryClient.query('foundry-mcp-bridge.getWorldInfo');
-    const systemId = (worldInfo.system ?? '').toLowerCase();
+    // In Foundry v13+, worldInfo.system is an object { id, version }.
+    // In older versions it may be a plain string. Handle both.
+    const systemRaw = worldInfo.system;
+    const systemId =
+      typeof systemRaw === 'string' ? systemRaw.toLowerCase() : (systemRaw?.id ?? '').toLowerCase();
 
     cachedSystemId = systemId;
 
@@ -43,6 +47,8 @@ export async function detectGameSystem(
       cachedSystem = 'pf2e';
     } else if (systemId === 'cosmere-rpg') {
       cachedSystem = 'cosmere-rpg';
+    } else if (systemId === 'mgt2e') {
+      cachedSystem = 'mgt2e';
     } else {
       cachedSystem = 'other';
     }
@@ -54,10 +60,11 @@ export async function detectGameSystem(
     return cachedSystem;
   } catch (error) {
     if (logger) {
-      logger.error('Failed to detect game system, defaulting to other', { error });
+      logger.warn('Failed to detect game system, will retry on next call', { error });
     }
-    cachedSystem = 'other';
-    return cachedSystem;
+    // Do NOT cache on error — Foundry may not be connected yet.
+    // Return 'other' for this call but allow retry next time.
+    return 'other';
   }
 }
 

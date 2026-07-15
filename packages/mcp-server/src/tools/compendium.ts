@@ -40,7 +40,9 @@ export class CompendiumTools {
    * Get or detect the game system (cached)
    */
   private async getGameSystem(): Promise<GameSystem> {
-    if (!this.gameSystem) {
+    // Don't cache 'other' — it likely means Foundry wasn't connected yet.
+    // Retry detection on every call until we get a real system ID.
+    if (!this.gameSystem || this.gameSystem === 'other') {
       this.gameSystem = await detectGameSystem(this.foundryClient, this.logger);
     }
     return this.gameSystem;
@@ -777,7 +779,7 @@ export class CompendiumTools {
         criteria: params,
         searchSummary: {
           ...searchSummary,
-          searchStrategy: `Prioritized pack search - ${gameSystem === 'pf2e' ? 'PF2e' : gameSystem === 'cosmere-rpg' ? 'Cosmere RPG' : 'D&D 5e'} content first, then modules, then campaign-specific`,
+          searchStrategy: `Prioritized pack search - ${gameSystem === 'pf2e' ? 'PF2e' : gameSystem === 'cosmere-rpg' ? 'Cosmere RPG' : gameSystem === 'mgt2e' ? 'Mongoose Traveller 2e' : 'D&D 5e'} content first, then modules, then campaign-specific`,
           note: 'Packs searched in priority order to find most relevant creatures first',
         },
         optimizationNote:
@@ -851,7 +853,21 @@ export class CompendiumTools {
       const stats: any = {};
 
       // Use system detection utilities for accurate stat extraction
-      if (gameSystem === 'cosmere-rpg') {
+      if (gameSystem === 'mgt2e') {
+        // Mongoose Traveller 2e: extract relevant stats for creatures/travellers
+        const system = item.system || {};
+        if (item.type === 'creature') {
+          if (system.hits?.max) stats.hits = system.hits.max;
+          if (system.behaviour) stats.behaviour = system.behaviour;
+          if (system.traits) stats.traits = system.traits;
+        } else if (item.type === 'traveller' || item.type === 'npc') {
+          if (system.sophont?.species) stats.species = system.sophont.species;
+          if (system.sophont?.profession) stats.profession = system.sophont.profession;
+          if (system.hits?.max) stats.hits = system.hits.max;
+        } else if (item.type === 'spacecraft') {
+          if (system.spacecraft?.dtons) stats.dtons = system.spacecraft.dtons;
+        }
+      } else if (gameSystem === 'cosmere-rpg') {
         const system = item.system || {};
 
         if (typeof system.tier === 'number') stats.tier = system.tier;
