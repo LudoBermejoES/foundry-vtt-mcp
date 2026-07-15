@@ -97,12 +97,17 @@ export class SocketBridge {
   private async connectWebSocket(): Promise<void> {
     this.activeConnectionType = 'websocket';
 
-    // WebSocket for HTTP localhost connections only
-    const protocol = 'ws';
+    // Auto-detect protocol: wss for HTTPS pages, ws for HTTP
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const host = this.config.serverHost;
-    this.log(`Using WebSocket (${protocol}://${host}:${this.config.serverPort})`);
+    // Behind a TLS reverse proxy the MCP path is served on the same origin as the page,
+    // so use the page's port. On plain HTTP (localhost) the MCP backend is a separate
+    // process on the configured port, so the page port must not be used there.
+    const sameOrigin = protocol === 'wss' && host === window.location.hostname;
+    const port = sameOrigin ? window.location.port || '443' : this.config.serverPort;
+    this.log(`Using WebSocket (${protocol}://${host}:${port}${this.config.namespace})`);
 
-    const wsUrl = `${protocol}://${host}:${this.config.serverPort}${this.config.namespace}`;
+    const wsUrl = `${protocol}://${host}:${port}${this.config.namespace}`;
 
     return new Promise((resolve, reject) => {
       const connectTimeout = setTimeout(() => {
