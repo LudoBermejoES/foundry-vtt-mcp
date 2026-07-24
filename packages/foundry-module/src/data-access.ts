@@ -7078,6 +7078,32 @@ export class FoundryDataAccess {
     }
   }
 
+  /**
+   * Roll a dice formula now and post the result to the chat log. Generic and
+   * system-agnostic — returns the total and the raw first-term die faces so the
+   * caller can apply system-specific success counting (e.g. World of Darkness).
+   */
+  async rollDice({
+    formula,
+    flavor,
+    whisper,
+  }: {
+    formula: string;
+    flavor?: string;
+    whisper?: boolean;
+  }): Promise<{ success: boolean; total: number; dice: number[] }> {
+    const roll = new Roll(formula);
+    await roll.evaluate();
+
+    const dice: number[] = (roll.dice?.[0]?.results as any[])?.map((r: any) => r.result) ?? [];
+
+    const rollMode = whisper ? 'gmroll' : 'publicroll';
+    const messageData: any = { flavor: flavor ?? '', speaker: ChatMessage.getSpeaker() };
+    await roll.toMessage(messageData, { create: true, rollMode });
+
+    return { success: true, total: roll.total ?? 0, dice };
+  }
+
   // Private storage for tracking roll button processing states
   private rollButtonProcessingStates: Map<string, boolean> = new Map();
 

@@ -11,7 +11,15 @@ import { z } from 'zod';
  * Supported game system identifiers
  * Extend this type when adding new systems
  */
-export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'cosmere-rpg' | 'wfrp4e' | 'mgt2e' | 'other';
+export type SystemId =
+  | 'dnd5e'
+  | 'pf2e'
+  | 'dsa5'
+  | 'cosmere-rpg'
+  | 'wfrp4e'
+  | 'mgt2e'
+  | 'worldofdarkness'
+  | 'other';
 
 /**
  * System metadata returned by adapters
@@ -339,6 +347,33 @@ export interface MGT2eCreatureIndex extends SystemCreatureIndex {
 }
 
 /**
+ * World of Darkness 20th-Anniversary (M20/V20/W20/…) specific creature index structure.
+ *
+ * Character-focused adapter. Live actors are all Foundry `type:"PC"`, differentiated by
+ * `system.settings.splat`/`.game`/`.variant` (NOT actor type). WoD has no Challenge
+ * Rating; the closest power-level proxy is the splat's power trait (Arete / Blood Pool /
+ * Rage / Glamour / Conviction / Essence …), read from the matching `Advantage` item's
+ * `system.permanent`.
+ */
+export interface WoDCreatureIndex extends SystemCreatureIndex {
+  system: 'worldofdarkness';
+  systemData: {
+    /** Splat (mage, vampire, werewolf, changeling, hunter, mortal, creature, …). */
+    splat?: string;
+    /** Game line the sheet renders as (usually equal to splat; `mage` for creatures). */
+    game?: string;
+    /** Sheet variant (e.g. `general`). */
+    variant?: string;
+    /** Human-readable name of the splat power trait (Arete, Blood Pool, Rage, Essence…). */
+    powerTrait?: string;
+    /** Power trait rating (the power trait Advantage's `system.permanent`) — power-level proxy. */
+    powerLevel?: number;
+    /** Enabled capability flags (the `has*` settings that are true). */
+    capabilities?: string[];
+  };
+}
+
+/**
  * Generic creature index for unsupported systems
  */
 export interface GenericCreatureIndex extends SystemCreatureIndex {
@@ -356,4 +391,5 @@ export type AnyCreatureIndex =
   | CosmereRpgCreatureIndex
   | WFRP4eCreatureIndex
   | MGT2eCreatureIndex
+  | WoDCreatureIndex
   | GenericCreatureIndex;

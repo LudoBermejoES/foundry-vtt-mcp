@@ -91,6 +91,9 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.updateWfrp4eActor`] = this.handleUpdateWfrp4eActor.bind(this);
     CONFIG.queries[`${modulePrefix}.addWfrp4eItems`] = this.handleAddWfrp4eItems.bind(this);
 
+    // Generic dice roll → chat (used by the worldofdarkness roll-pool tool)
+    CONFIG.queries[`${modulePrefix}.rollDice`] = this.handleRollDice.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -868,6 +871,23 @@ export class QueryHandlers {
         `Failed to add WFRP4e items: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
+  }
+
+  /**
+   * Roll a dice formula now and post it to the chat log. Generic (system-agnostic);
+   * the WoD success/botch counting happens MCP-side. GM-only.
+   */
+  private async handleRollDice(data: {
+    formula: string;
+    flavor?: string;
+    whisper?: boolean;
+  }): Promise<any> {
+    const gmCheck = this.validateGMAccess();
+    if (!gmCheck.allowed) {
+      return { error: 'Access denied', success: false };
+    }
+    this.dataAccess.validateFoundryState();
+    return this.dataAccess.rollDice(data);
   }
 
   /**

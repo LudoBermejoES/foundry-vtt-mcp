@@ -1,0 +1,2990 @@
+{
+  "name": "Hombre lobo",
+  "type": "PC",
+  "img": "icons/svg/mystery-man.svg",
+  "system": {
+    "settings": {
+      "iscreated": true,
+      "isupdated": false,
+      "isshapecreated": false,
+      "usechimerical": false,
+      "usesplatfont": true,
+      "haswillpower": true,
+      "hasvirtue": false,
+      "hasrenown": true,
+      "hasquintessence": false,
+      "hasdisciplines": false,
+      "hascombinationdisciplines": false,
+      "hasrituals": false,
+      "hasgifts": false,
+      "hasrites": false,
+      "hasshapes": false,
+      "hasapocalypticforms": false,
+      "hasspheres": false,
+      "hasrotes": false,
+      "hasresonances": false,
+      "hasnuminas": false,
+      "hasrealms": false,
+      "haslores": false,
+      "hasedges": false,
+      "version": "7.3.2",
+      "era": "modern",
+      "splat": "werewolf",
+      "game": "werewolf",
+      "variant": "general",
+      "variantsheet": "werewolf",
+      "dicesetting": "",
+      "attributes": {
+        "defaultmaxvalue": 5
+      },
+      "abilities": {
+        "defaultmaxvalue": 5
+      },
+      "powers": {
+        "defaultmaxvalue": 5
+      },
+      "soak": {
+        "bashing": {
+          "bonus": 0,
+          "isrollable": true
+        },
+        "lethal": {
+          "bonus": 0,
+          "isrollable": true
+        },
+        "aggravated": {
+          "bonus": 0,
+          "isrollable": true
+        },
+        "chimerical": {
+          "bashing": {
+            "bonus": 0,
+            "isrollable": false
+          },
+          "lethal": {
+            "bonus": 0,
+            "isrollable": false
+          },
+          "aggravated": {
+            "bonus": 0,
+            "isrollable": false
+          }
+        }
+      }
+    },
+    "traits": {
+      "health": {
+        "totalhealthlevels": {
+          "value": 7,
+          "max": 7
+        }
+      }
+    },
+    "bio": {
+      "worldanvil": "",
+      "name": "",
+      "nature": "",
+      "demeanor": "",
+      "derangement": "",
+      "concept": "",
+      "splatfields": {
+        "breed": {
+          "label": "wod.bio.breed",
+          "value": "",
+          "type": "select",
+          "listdata": "BreedListv2",
+          "isremovable": false,
+          "isvisible": true
+        },
+        "auspice": {
+          "label": "wod.bio.auspice",
+          "value": "",
+          "type": "select",
+          "listdata": "AuspiceListv2",
+          "isremovable": false,
+          "isvisible": true
+        },
+        "tribe": {
+          "label": "wod.bio.tribe",
+          "value": "",
+          "type": "input",
+          "listdata": "",
+          "isremovable": false,
+          "isvisible": true
+        },
+        "pack": {
+          "label": "wod.bio.packname",
+          "value": "",
+          "type": "input",
+          "listdata": "",
+          "isremovable": false,
+          "isvisible": true
+        },
+        "totem": {
+          "label": "wod.bio.packtotem",
+          "value": "",
+          "type": "input",
+          "listdata": "",
+          "isremovable": false,
+          "isvisible": true
+        }
+      },
+      "appearance": "",
+      "background": "",
+      "notes": "",
+      "roleplaytip": ""
+    },
+    "attributes": {
+      "strength": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "physical",
+        "label": "wod.attributes.strength",
+        "speciality": "",
+        "sort": 1,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "dexterity": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "physical",
+        "label": "wod.attributes.dexterity",
+        "speciality": "",
+        "sort": 2,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "stamina": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "physical",
+        "label": "wod.attributes.stamina",
+        "speciality": "",
+        "sort": 3,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "charisma": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "social",
+        "label": "wod.attributes.charisma",
+        "speciality": "",
+        "sort": 4,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "manipulation": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "social",
+        "label": "wod.attributes.manipulation",
+        "speciality": "",
+        "sort": 5,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "appearance": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "social",
+        "label": "wod.attributes.appearance",
+        "speciality": "",
+        "sort": 6,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "composure": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "social",
+        "label": "wod.attributes.composure",
+        "speciality": "",
+        "sort": 7,
+        "isvisible": false,
+        "isfavorited": false
+      },
+      "perception": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "mental",
+        "label": "wod.attributes.perception",
+        "speciality": "",
+        "sort": 8,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "intelligence": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "mental",
+        "label": "wod.attributes.intelligence",
+        "speciality": "",
+        "sort": 9,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "wits": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "mental",
+        "label": "wod.attributes.wits",
+        "speciality": "",
+        "sort": 10,
+        "isvisible": true,
+        "isfavorited": false
+      },
+      "resolve": {
+        "value": 1,
+        "bonus": 0,
+        "total": 1,
+        "max": 5,
+        "type": "mental",
+        "label": "wod.attributes.resolve",
+        "speciality": "",
+        "sort": 11,
+        "isvisible": false,
+        "isfavorited": false
+      }
+    },
+    "soak": {
+      "bashing": 0,
+      "lethal": 0,
+      "aggravated": 0,
+      "chimerical": {
+        "bashing": 0,
+        "lethal": 0,
+        "aggravated": 0
+      }
+    },
+    "health": {
+      "damage": {
+        "bashing": 0,
+        "lethal": 0,
+        "aggravated": 0,
+        "woundlevel": "",
+        "woundpenalty": 0,
+        "chimerical": {
+          "bashing": 0,
+          "lethal": 0,
+          "aggravated": 0
+        }
+      },
+      "bruised": {
+        "value": 1,
+        "total": 1,
+        "penalty": 0,
+        "label": "wod.health.bruised"
+      },
+      "hurt": {
+        "value": 1,
+        "total": 1,
+        "penalty": -1,
+        "label": "wod.health.hurt"
+      },
+      "injured": {
+        "value": 1,
+        "total": 1,
+        "penalty": -1,
+        "label": "wod.health.injured"
+      },
+      "wounded": {
+        "value": 1,
+        "total": 1,
+        "penalty": -2,
+        "label": "wod.health.wounded"
+      },
+      "mauled": {
+        "value": 1,
+        "total": 1,
+        "penalty": -2,
+        "label": "wod.health.mauled"
+      },
+      "crippled": {
+        "value": 1,
+        "total": 1,
+        "penalty": -5,
+        "label": "wod.health.crippled"
+      },
+      "incapacitated": {
+        "value": 1,
+        "total": 1,
+        "penalty": -99,
+        "label": "wod.health.incapacitated"
+      }
+    },
+    "initiative": {
+      "base": 0,
+      "bonus": 0,
+      "total": 0
+    },
+    "conditions": {
+      "isignoringpain": false,
+      "isstunned": false,
+      "isfrenzy": false
+    },
+    "movement": {
+      "walk": {
+        "value": 0,
+        "isactive": true
+      },
+      "jog": {
+        "value": 0,
+        "isactive": true
+      },
+      "run": {
+        "value": 0,
+        "isactive": true
+      },
+      "fly": {
+        "value": 0,
+        "isactive": false
+      },
+      "vjump": {
+        "value": 0,
+        "isactive": true
+      },
+      "hjump": {
+        "value": 0,
+        "isactive": true
+      }
+    },
+    "gear": {
+      "notes": "",
+      "money": {
+        "carried": 0,
+        "bank": 0
+      }
+    },
+    "favoriterolls": []
+  },
+  "prototypeToken": {
+    "name": "Hombre lobo",
+    "displayName": 0,
+    "actorLink": false,
+    "width": 1,
+    "height": 1,
+    "depth": 1,
+    "texture": {
+      "src": "icons/svg/mystery-man.svg",
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "fit": "contain",
+      "scaleX": 1,
+      "scaleY": 1,
+      "tint": "#ffffff",
+      "alphaThreshold": 0.75
+    },
+    "lockRotation": false,
+    "rotation": 0,
+    "alpha": 1,
+    "disposition": -1,
+    "displayBars": 0,
+    "bar1": {
+      "attribute": "traits.health.totalhealthlevels"
+    },
+    "bar2": {
+      "attribute": null
+    },
+    "light": {
+      "negative": false,
+      "priority": 0,
+      "alpha": 0.5,
+      "angle": 360,
+      "bright": 0,
+      "color": null,
+      "coloration": 1,
+      "dim": 0,
+      "attenuation": 0.5,
+      "luminosity": 0.5,
+      "saturation": 0,
+      "contrast": 0,
+      "shadows": 0,
+      "animation": {
+        "type": null,
+        "speed": 5,
+        "intensity": 5,
+        "reverse": false
+      },
+      "darkness": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    "sight": {
+      "enabled": false,
+      "range": 0,
+      "angle": 360,
+      "visionMode": "basic",
+      "color": null,
+      "attenuation": 0.1,
+      "brightness": 0,
+      "saturation": 0,
+      "contrast": 0
+    },
+    "detectionModes": {},
+    "occludable": {
+      "radius": 0
+    },
+    "ring": {
+      "enabled": false,
+      "colors": {
+        "ring": null,
+        "background": null
+      },
+      "effects": 1,
+      "subject": {
+        "scale": 1,
+        "texture": null
+      }
+    },
+    "turnMarker": {
+      "mode": 1,
+      "animation": null,
+      "src": null,
+      "disposition": false
+    },
+    "movementAction": null,
+    "flags": {},
+    "randomImg": false,
+    "appendNumber": false,
+    "prependAdjective": false
+  },
+  "items": [
+    {
+      "folder": null,
+      "name": "Athletics",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": true,
+          "israngedeweapon": true,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.BSqDpxACJNKNYgLC",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "athletics",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.athletics",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660315,
+        "modifiedTime": 1784736660324,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "plzjzJ1ZVccJals0",
+      "sort": 1400000
+    },
+    {
+      "folder": null,
+      "name": "Brawl",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": true,
+          "israngedeweapon": true,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.Lns5MJXxfKqxiZVG",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "brawl",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.brawl",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660315,
+        "modifiedTime": 1784736660324,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "uY8l6zPQDAEcd3Ee",
+      "sort": 1200000
+    },
+    {
+      "folder": null,
+      "name": "Alertness",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.2WeqIquNEt5rJK4J",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "alertness",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.alertness",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660316,
+        "modifiedTime": 1784736660324,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "G0bgnETzYqvGnpqQ",
+      "sort": 1300000
+    },
+    {
+      "folder": null,
+      "name": "Intimidation",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": true,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.zQLhdJWmaDKOdiqo",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "intimidation",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.intimidation",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660316,
+        "modifiedTime": 1784736660325,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "uHgcwTb1KXEGleZ8",
+      "sort": 800000
+    },
+    {
+      "folder": null,
+      "name": "Empathy",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.svJ8IxpoX2w23fNr",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "empathy",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.empathy",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660316,
+        "modifiedTime": 1784736660325,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "C95YS4jOI84QyyAz",
+      "sort": 700000
+    },
+    {
+      "folder": null,
+      "name": "Leadership",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.gSqQwHTn7s0YFkjR",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "leadership",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.leadership",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660316,
+        "modifiedTime": 1784736660325,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "KgB1leixsG0XyTre",
+      "sort": 500000
+    },
+    {
+      "folder": null,
+      "name": "Primal Urge",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.cfYKYM9ioZp54nQg",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "primalurge",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.primalurge",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660316,
+        "modifiedTime": 1784736660325,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "sih8mw15A1gZrqQu",
+      "sort": 300000
+    },
+    {
+      "folder": null,
+      "name": "Subterfuge",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": true,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.IZnHeaaqDCgDK1ZB",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "subterfuge",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.subterfuge",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660317,
+        "modifiedTime": 1784736660326,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "tnDQn4aVjiPskTp8",
+      "sort": 0
+    },
+    {
+      "folder": null,
+      "name": "Streetwise",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.JJXl4R5REbZ4zNQQ",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "streetwise",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.streetwise",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660317,
+        "modifiedTime": 1784736660326,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "SEmlcp7BXOKDhicv",
+      "sort": 200000
+    },
+    {
+      "folder": null,
+      "name": "Animal Ken",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.ikua3D95h3fRAEP9",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "animalken",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.animalken",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660317,
+        "modifiedTime": 1784736660326,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "3EPSh6WDiQpTJfkB",
+      "sort": 1000000
+    },
+    {
+      "folder": null,
+      "name": "Craft",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.X1XwHZlAnrNt83MV",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "craft",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.craft",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660317,
+        "modifiedTime": 1784736660326,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "q1GeJ1wzTuMdkw4h",
+      "sort": 1200000
+    },
+    {
+      "folder": null,
+      "name": "Drive",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.JHIVC95Y9whMazT0",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "drive",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.drive",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660317,
+        "modifiedTime": 1784736660326,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "rQHl4uu401HIkzFh",
+      "sort": 700000
+    },
+    {
+      "folder": null,
+      "name": "Etiquette",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.9iv1y10MyoYAnVQ0",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "etiquette",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.etiquette",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660318,
+        "modifiedTime": 1784736660327,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "yMSTP0HmgZTfd6qT",
+      "sort": 900000
+    },
+    {
+      "folder": null,
+      "name": "Firearms",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": true,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.5ZPQyYDmBXfTWPhO",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "firearms",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.firearms",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660318,
+        "modifiedTime": 1784736660327,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "gzTN1ihFnRe65vex",
+      "sort": 800000
+    },
+    {
+      "folder": null,
+      "name": "Larceny",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.WMGTuErUohRV08Sx",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "larceny",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.larceny",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660318,
+        "modifiedTime": 1784736660327,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "lVJ1Gree3QXchY3s",
+      "sort": 400000
+    },
+    {
+      "folder": null,
+      "name": "Melee",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": true,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.wUdJ551LhHLg2ZIZ",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "melee",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.melee",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660318,
+        "modifiedTime": 1784736660327,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "w6tnmkrGxEQTLZ5o",
+      "sort": 100000
+    },
+    {
+      "folder": null,
+      "name": "Performance",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.wQQpWJSccjTU4gfp",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "performance",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.performance",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660318,
+        "modifiedTime": 1784736660328,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "obiGdGptwr6QqUR4",
+      "sort": 300000
+    },
+    {
+      "folder": null,
+      "name": "Stealth",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.7nL5BwyhdzisIuV2",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "stealth",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.stealth",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660319,
+        "modifiedTime": 1784736660328,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "wOmbU4bOmmT4cZep",
+      "sort": 0
+    },
+    {
+      "folder": null,
+      "name": "Survival",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityskill.Item.V8xSK0KggexcOkSC",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "survival",
+        "reference": "",
+        "type": "wod.abilities.skill",
+        "label": "wod.abilities.survival",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660319,
+        "modifiedTime": 1784736660328,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "LYxHiy80Aq7qWiWQ",
+      "sort": 0
+    },
+    {
+      "folder": null,
+      "name": "Expression",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": true,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilitytalent.Item.qXjg5KWqLG3FOIDP",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "expression",
+        "reference": "",
+        "type": "wod.abilities.talent",
+        "label": "wod.abilities.expression",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660319,
+        "modifiedTime": 1784736660328,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "wFoMIel6Lq5QB5YH",
+      "sort": 900000
+    },
+    {
+      "folder": null,
+      "name": "Academics",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.fH8uURqQf7oV9BJj",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "academics",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.academics",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660319,
+        "modifiedTime": 1784736660329,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "IAXf8xCjvBEh3sJr",
+      "sort": 1600000
+    },
+    {
+      "folder": null,
+      "name": "Computer",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.7ezT63Beb9NHJ6gx",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "computer",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.computer",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660319,
+        "modifiedTime": 1784736660329,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "7guZROu49bB3V6Nx",
+      "sort": 1700000
+    },
+    {
+      "folder": null,
+      "name": "Enigmas",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.lekK0LTfTJ0W4uQJ",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "enigmas",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.enigmas",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660319,
+        "modifiedTime": 1784736660329,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "0WNLtAcjIHZGMi5i",
+      "sort": 1500000
+    },
+    {
+      "folder": null,
+      "name": "Investigation",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.SNc5Z4QIhl58YqKw",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "investigation",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.investigation",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660320,
+        "modifiedTime": 1784736660329,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "RpIrKGZ7meMzu6Mf",
+      "sort": 1100000
+    },
+    {
+      "folder": null,
+      "name": "Law",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.cvV3MvdX56dBeq43",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "law",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.law",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660320,
+        "modifiedTime": 1784736660330,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "JKTUhX0jVnuOh9oY",
+      "sort": 700000
+    },
+    {
+      "folder": null,
+      "name": "Medicine",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.Z52sssZJaGNNZoKJ",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "medicine",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.medicine",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660320,
+        "modifiedTime": 1784736660330,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "4h1Og2eWvXT9B0z1",
+      "sort": 800000
+    },
+    {
+      "folder": null,
+      "name": "Occult",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.WJeOcAFkMH39yu1p",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "occult",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.occult",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660320,
+        "modifiedTime": 1784736660330,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "SDuhX28x0dDdjp4P",
+      "sort": 400000
+    },
+    {
+      "folder": null,
+      "name": "Rituals",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.hcj1AaWSGVyzqxTj",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "rituals",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.rituals",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660320,
+        "modifiedTime": 1784736660330,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "SCkdyARNIauFeL4r",
+      "sort": 300000
+    },
+    {
+      "folder": null,
+      "name": "Science",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.AjvC6lzwwHkQkC0S",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "science",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.science",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660321,
+        "modifiedTime": 1784736660331,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "lsYCvlupaQI2IYpC",
+      "sort": 200000
+    },
+    {
+      "folder": null,
+      "name": "Technology",
+      "type": "Ability",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "alwaysspeciality": false,
+          "isfavorited": false,
+          "ismeleeweapon": false,
+          "israngedeweapon": false,
+          "itemuuid": "Compendium.worldofdarkness.abilityknowledge.Item.I8w4i9hevjwey2Rw",
+          "order": 0,
+          "ispower": false
+        },
+        "id": "technology",
+        "reference": "",
+        "type": "wod.abilities.knowledge",
+        "label": "wod.abilities.technology",
+        "value": 0,
+        "bonus": 0,
+        "total": 0,
+        "max": 5,
+        "speciality": "",
+        "description": ""
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660321,
+        "modifiedTime": 1784736660331,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "yb6jmYav3xZREOuD",
+      "sort": 0
+    },
+    {
+      "name": "Rage",
+      "type": "Advantage",
+      "_id": "8ZYauKMvp8lthj34",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.AAWqCpNoFoxRmhW6",
+          "usepermanent": true,
+          "usetemporary": true,
+          "useroll": true,
+          "order": 0,
+          "highertemporary": true,
+          "usebothrolls": false
+        },
+        "id": "rage",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "group": "",
+        "label": "wod.advantages.rage",
+        "permanent": 0,
+        "temporary": 0,
+        "max": 10,
+        "roll": 0,
+        "perturn": 0,
+        "bearing": 0,
+        "bearingtext": "",
+        "description": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "folder": "U3kwGiNXgVvF24uZ",
+      "sort": 200000,
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660321,
+        "modifiedTime": 1784736660331,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      }
+    },
+    {
+      "name": "Gnosis",
+      "type": "Advantage",
+      "_id": "NjXyIHIRJZt4kg04",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.JeBG8vBNnISXqkFV",
+          "usepermanent": true,
+          "usetemporary": true,
+          "useroll": true,
+          "order": 1,
+          "usebothrolls": false,
+          "highertemporary": false
+        },
+        "id": "gnosis",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "group": "",
+        "label": "wod.advantages.gnosis",
+        "permanent": 0,
+        "temporary": 0,
+        "max": 10,
+        "roll": 0,
+        "perturn": 0,
+        "bearing": 0,
+        "bearingtext": "",
+        "description": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "folder": "U3kwGiNXgVvF24uZ",
+      "sort": 100000,
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660321,
+        "modifiedTime": 1784736660331,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      }
+    },
+    {
+      "folder": null,
+      "name": "Willpower",
+      "type": "Advantage",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "usepermanent": true,
+          "usetemporary": true,
+          "useroll": true,
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.b9yCLu8zZYuCXm1F",
+          "order": 2,
+          "usebothrolls": false,
+          "highertemporary": false
+        },
+        "id": "willpower",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "label": "wod.advantages.willpower",
+        "permanent": 0,
+        "temporary": 0,
+        "max": 10,
+        "roll": 0,
+        "description": "",
+        "perturn": 0,
+        "group": "",
+        "bearing": 0,
+        "bearingtext": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660322,
+        "modifiedTime": 1784736660332,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "41FmSSM4DWfSDNIQ",
+      "sort": 0
+    },
+    {
+      "name": "Renown - Glory",
+      "type": "Advantage",
+      "_id": "6b4ogY6r7U7LcuzL",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.Y0QfmyajgbeP4HQr",
+          "usepermanent": true,
+          "usetemporary": true,
+          "useroll": false,
+          "order": 3,
+          "highertemporary": true,
+          "usebothrolls": false
+        },
+        "id": "glory",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "group": "renown",
+        "label": "wod.advantages.glory",
+        "permanent": 0,
+        "temporary": 0,
+        "max": 10,
+        "roll": 0,
+        "perturn": 0,
+        "bearing": 0,
+        "bearingtext": "",
+        "description": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "folder": "U3kwGiNXgVvF24uZ",
+      "sort": 150000,
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660322,
+        "modifiedTime": 1784736660332,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      }
+    },
+    {
+      "name": "Renown - Honor",
+      "type": "Advantage",
+      "_id": "Cygou8yo2PO4B9ty",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.ryrpH7yFKE6am52c",
+          "usepermanent": true,
+          "usetemporary": true,
+          "useroll": false,
+          "order": 4,
+          "highertemporary": true,
+          "usebothrolls": false
+        },
+        "id": "honor",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "group": "renown",
+        "label": "wod.advantages.honor",
+        "permanent": 0,
+        "temporary": 0,
+        "max": 10,
+        "roll": 0,
+        "perturn": 0,
+        "bearing": 0,
+        "bearingtext": "",
+        "description": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "folder": "U3kwGiNXgVvF24uZ",
+      "sort": 125000,
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660322,
+        "modifiedTime": 1784736660332,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      }
+    },
+    {
+      "folder": "U3kwGiNXgVvF24uZ",
+      "name": "Renown - Wisdom",
+      "type": "Advantage",
+      "_id": "qezbHUgK9FvPy1mg",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.jZzlzhx5uEz100fp",
+          "usepermanent": true,
+          "usetemporary": true,
+          "useroll": false,
+          "order": 5,
+          "highertemporary": true,
+          "usebothrolls": false
+        },
+        "id": "wisdom",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "group": "renown",
+        "label": "wod.advantages.wisdom",
+        "permanent": 0,
+        "temporary": 0,
+        "max": 10,
+        "roll": 0,
+        "perturn": 0,
+        "bearing": 0,
+        "bearingtext": "",
+        "description": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "sort": 0,
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660322,
+        "modifiedTime": 1784736660332,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      }
+    },
+    {
+      "folder": "U3kwGiNXgVvF24uZ",
+      "name": "Rank [6]",
+      "type": "Advantage",
+      "_id": "NlOd3dD83SjVYqkl",
+      "img": "systems/worldofdarkness/assets/img/items/feature.svg",
+      "system": {
+        "settings": {
+          "iscreated": true,
+          "isupdated": false,
+          "isactive": false,
+          "isvisible": true,
+          "isremovable": false,
+          "version": "7.3.2",
+          "itemuuid": "Compendium.worldofdarkness.advantages.Item.8ZkiuUFh9YMVmgrG",
+          "usepermanent": true,
+          "usetemporary": false,
+          "useroll": false,
+          "highertemporary": false,
+          "order": 6,
+          "usebothrolls": false
+        },
+        "id": "rank",
+        "reference": "",
+        "type": "wod.advantages.advantages",
+        "group": "renown",
+        "label": "wod.advantages.rank",
+        "permanent": 1,
+        "temporary": 0,
+        "max": 6,
+        "roll": 0,
+        "perturn": 0,
+        "bearing": 0,
+        "bearingtext": "",
+        "description": "",
+        "imbalance": 0
+      },
+      "effects": [],
+      "sort": 0,
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660322,
+        "modifiedTime": 1784736660333,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      }
+    },
+    {
+      "name": "Homid",
+      "type": "Trait",
+      "img": "icons/svg/item-bag.svg",
+      "system": {
+        "iscreated": true,
+        "isactive": true,
+        "isvisible": true,
+        "isremovable": false,
+        "order": 0,
+        "version": "7.3.2",
+        "parentid": "",
+        "itemuuid": "Compendium.worldofdarkness.features.Item.QFDb43JtpY6jU6Uc",
+        "worldanvil": "",
+        "reference": "",
+        "description": "",
+        "details": "",
+        "property": [],
+        "bonuslist": [],
+        "type": "wod.types.shapeform",
+        "placement": "feature",
+        "level": "0",
+        "value": 0,
+        "max": 5,
+        "ismeleeweapon": false,
+        "israngedeweapon": false,
+        "israngedweapon": false,
+        "ispower": false,
+        "isrollable": true,
+        "isfavorited": false,
+        "usesoaksettings": false,
+        "label": "wod.shapes.homid",
+        "speciality": "",
+        "dice1": "stamina",
+        "dice2": "primalurge",
+        "bonus": 0,
+        "difficulty": "",
+        "soak": {
+          "bashing": {
+            "isrollable": true
+          },
+          "lethal": {
+            "isrollable": false
+          },
+          "aggravated": {
+            "isrollable": false
+          }
+        },
+        "icon": "",
+        "tokenimage": ""
+      },
+      "effects": [],
+      "folder": "68EqoVPp788XsIWS",
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660323,
+        "modifiedTime": 1784736660333,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "y7X9n6PF9JFnSDkM",
+      "sort": -100000
+    },
+    {
+      "name": "Glabro",
+      "type": "Trait",
+      "img": "icons/svg/item-bag.svg",
+      "system": {
+        "iscreated": true,
+        "isactive": false,
+        "isvisible": true,
+        "isremovable": false,
+        "order": 1,
+        "version": "7.3.2",
+        "parentid": "",
+        "itemuuid": "Compendium.worldofdarkness.features.Item.pha4qBJnsepYkrSz",
+        "worldanvil": "",
+        "reference": "",
+        "description": "",
+        "details": "",
+        "property": [],
+        "bonuslist": [
+          {
+            "name": "Strength",
+            "settingtype": "strength",
+            "type": "attribute_buff",
+            "value": 2,
+            "isactive": false
+          },
+          {
+            "name": "Stamina",
+            "settingtype": "stamina",
+            "type": "attribute_buff",
+            "value": 2,
+            "isactive": false
+          },
+          {
+            "name": "Manipulation",
+            "settingtype": "manipulation",
+            "type": "attribute_buff",
+            "value": -2,
+            "isactive": false
+          },
+          {
+            "name": "Apperance",
+            "settingtype": "appearance",
+            "type": "attribute_buff",
+            "value": -1,
+            "isactive": false
+          }
+        ],
+        "type": "wod.types.shapeform",
+        "placement": "feature",
+        "level": "0",
+        "value": 0,
+        "max": 5,
+        "ismeleeweapon": false,
+        "israngedeweapon": false,
+        "israngedweapon": false,
+        "ispower": false,
+        "isrollable": true,
+        "isfavorited": false,
+        "usesoaksettings": false,
+        "label": "wod.shapes.glabro",
+        "speciality": "",
+        "dice1": "stamina",
+        "dice2": "primalurge",
+        "bonus": 0,
+        "difficulty": "",
+        "soak": {
+          "bashing": {
+            "isrollable": true
+          },
+          "lethal": {
+            "isrollable": false
+          },
+          "aggravated": {
+            "isrollable": false
+          }
+        },
+        "icon": "systems/worldofdarkness/assets/img/shapes/form_glabro.svg",
+        "tokenimage": "icons/svg/mystery-man.svg"
+      },
+      "effects": [],
+      "folder": "68EqoVPp788XsIWS",
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660323,
+        "modifiedTime": 1784736660333,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "JUhcsjtkwl30YuQ3",
+      "sort": 0
+    },
+    {
+      "name": "Crinos",
+      "type": "Trait",
+      "img": "icons/svg/item-bag.svg",
+      "system": {
+        "iscreated": true,
+        "isactive": false,
+        "isvisible": true,
+        "isremovable": false,
+        "order": 2,
+        "version": "7.3.2",
+        "parentid": "",
+        "itemuuid": "Compendium.worldofdarkness.features.Item.dpcrY9e6cIpcvLMC",
+        "worldanvil": "",
+        "reference": "",
+        "description": "",
+        "details": "",
+        "property": [],
+        "bonuslist": [
+          {
+            "name": "Strength",
+            "settingtype": "strength",
+            "type": "attribute_buff",
+            "value": 4,
+            "isactive": false
+          },
+          {
+            "name": "Dexterity",
+            "settingtype": "dexterity",
+            "type": "attribute_buff",
+            "value": 1,
+            "isactive": false
+          },
+          {
+            "name": "Stamina",
+            "settingtype": "stamina",
+            "type": "attribute_buff",
+            "value": 3,
+            "isactive": false
+          },
+          {
+            "name": "Manipulation",
+            "settingtype": "manipulation",
+            "type": "attribute_buff",
+            "value": -3,
+            "isactive": false
+          },
+          {
+            "name": "Appearance",
+            "settingtype": "appearance",
+            "type": "attribute_fixed_value",
+            "value": 0,
+            "isactive": false
+          }
+        ],
+        "type": "wod.types.shapeform",
+        "placement": "feature",
+        "level": "0",
+        "value": 0,
+        "max": 5,
+        "ismeleeweapon": false,
+        "israngedeweapon": false,
+        "israngedweapon": false,
+        "ispower": false,
+        "isrollable": true,
+        "isfavorited": false,
+        "usesoaksettings": false,
+        "label": "wod.shapes.crinos",
+        "speciality": "",
+        "dice1": "stamina",
+        "dice2": "primalurge",
+        "bonus": 0,
+        "difficulty": "",
+        "soak": {
+          "bashing": {
+            "isrollable": true
+          },
+          "lethal": {
+            "isrollable": false
+          },
+          "aggravated": {
+            "isrollable": false
+          }
+        },
+        "icon": "systems/worldofdarkness/assets/img/shapes/form_crinos.svg",
+        "tokenimage": ""
+      },
+      "effects": [],
+      "folder": "68EqoVPp788XsIWS",
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660323,
+        "modifiedTime": 1784736660334,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "Mx5nQNFfoMBMhIpr",
+      "sort": 25000
+    },
+    {
+      "name": "Hispo",
+      "type": "Trait",
+      "img": "icons/svg/item-bag.svg",
+      "system": {
+        "iscreated": true,
+        "isactive": false,
+        "isvisible": true,
+        "isremovable": false,
+        "order": 3,
+        "version": "7.3.2",
+        "parentid": "",
+        "itemuuid": "Compendium.worldofdarkness.features.Item.vv03mjdmpjJO6pbt",
+        "worldanvil": "",
+        "reference": "",
+        "description": "",
+        "details": "",
+        "property": [],
+        "bonuslist": [
+          {
+            "name": "Strength",
+            "settingtype": "strength",
+            "type": "attribute_buff",
+            "value": 3,
+            "isactive": false
+          },
+          {
+            "name": "Dexterity",
+            "settingtype": "dexterity",
+            "type": "attribute_buff",
+            "value": 2,
+            "isactive": false
+          },
+          {
+            "name": "Stamina",
+            "settingtype": "stamina",
+            "type": "attribute_buff",
+            "value": 3,
+            "isactive": false
+          },
+          {
+            "name": "Manipulation",
+            "settingtype": "manipulation",
+            "type": "attribute_buff",
+            "value": -3,
+            "isactive": false
+          },
+          {
+            "name": "Perception",
+            "settingtype": "perception",
+            "type": "attribute_diff",
+            "value": -1,
+            "isactive": false
+          }
+        ],
+        "type": "wod.types.shapeform",
+        "placement": "feature",
+        "level": "0",
+        "value": 0,
+        "max": 5,
+        "ismeleeweapon": false,
+        "israngedeweapon": false,
+        "israngedweapon": false,
+        "ispower": false,
+        "isrollable": true,
+        "isfavorited": false,
+        "usesoaksettings": false,
+        "label": "wod.shapes.hispo",
+        "speciality": "",
+        "dice1": "stamina",
+        "dice2": "primalurge",
+        "bonus": 0,
+        "difficulty": "",
+        "soak": {
+          "bashing": {
+            "isrollable": true
+          },
+          "lethal": {
+            "isrollable": false
+          },
+          "aggravated": {
+            "isrollable": false
+          }
+        },
+        "icon": "systems/worldofdarkness/assets/img/shapes/form_hispo.svg",
+        "tokenimage": ""
+      },
+      "effects": [],
+      "folder": "68EqoVPp788XsIWS",
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660323,
+        "modifiedTime": 1784736660334,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "gPj6D2g0Dsx0rvQO",
+      "sort": 50000
+    },
+    {
+      "name": "Lupus",
+      "type": "Trait",
+      "img": "icons/svg/item-bag.svg",
+      "system": {
+        "iscreated": true,
+        "isactive": false,
+        "isvisible": true,
+        "isremovable": false,
+        "order": 4,
+        "version": "7.3.2",
+        "parentid": "",
+        "itemuuid": "Compendium.worldofdarkness.features.Item.rVDpbybJBl3RDu1A",
+        "worldanvil": "",
+        "reference": "",
+        "description": "",
+        "details": "",
+        "property": [],
+        "bonuslist": [
+          {
+            "name": "Strength",
+            "settingtype": "strength",
+            "type": "attribute_buff",
+            "value": 1,
+            "isactive": false
+          },
+          {
+            "name": "Dexterity",
+            "settingtype": "dexterity",
+            "type": "attribute_buff",
+            "value": 2,
+            "isactive": false
+          },
+          {
+            "name": "Stamina",
+            "settingtype": "stamina",
+            "type": "attribute_buff",
+            "value": 2,
+            "isactive": false
+          },
+          {
+            "name": "Manipulation",
+            "settingtype": "manipulation",
+            "type": "attribute_buff",
+            "value": -3,
+            "isactive": false
+          },
+          {
+            "name": "Perception",
+            "settingtype": "perception",
+            "type": "attribute_diff",
+            "value": -2,
+            "isactive": false
+          }
+        ],
+        "type": "wod.types.shapeform",
+        "placement": "feature",
+        "level": "0",
+        "value": 0,
+        "max": 5,
+        "ismeleeweapon": false,
+        "israngedeweapon": false,
+        "israngedweapon": false,
+        "ispower": false,
+        "isrollable": true,
+        "isfavorited": false,
+        "usesoaksettings": false,
+        "label": "wod.shapes.lupus",
+        "speciality": "",
+        "dice1": "stamina",
+        "dice2": "primalurge",
+        "bonus": 0,
+        "difficulty": "",
+        "soak": {
+          "bashing": {
+            "isrollable": true
+          },
+          "lethal": {
+            "isrollable": false
+          },
+          "aggravated": {
+            "isrollable": false
+          }
+        },
+        "icon": "systems/worldofdarkness/assets/img/shapes/form_lupus.svg",
+        "tokenimage": ""
+      },
+      "effects": [],
+      "folder": "68EqoVPp788XsIWS",
+      "ownership": {
+        "default": 0,
+        "CJSsCwdnDobaXtrZ": 3,
+        "TozUnhZx4rZVfvLv": 3
+      },
+      "flags": {},
+      "_stats": {
+        "compendiumSource": null,
+        "duplicateSource": null,
+        "exportSource": null,
+        "coreVersion": "14.365",
+        "systemId": "worldofdarkness",
+        "systemVersion": "7.3.2",
+        "createdTime": 1784736660324,
+        "modifiedTime": 1784736660334,
+        "lastModifiedBy": "TozUnhZx4rZVfvLv"
+      },
+      "_id": "AXbAP5Ob2OU0UqBm",
+      "sort": 75000
+    }
+  ],
+  "effects": [],
+  "folder": null,
+  "ownership": {
+    "default": 0
+  },
+  "flags": {},
+  "_stats": {
+    "coreVersion": "14.365",
+    "systemId": "worldofdarkness",
+    "systemVersion": "7.3.2",
+    "createdTime": 1784736593820,
+    "modifiedTime": 1784736660376,
+    "lastModifiedBy": "TozUnhZx4rZVfvLv",
+    "compendiumSource": null,
+    "duplicateSource": null,
+    "exportSource": {
+      "worldId": "berlin-tenebroso",
+      "uuid": "Actor.u557yk9n1o9WsuMR",
+      "coreVersion": "14.365",
+      "systemId": "worldofdarkness",
+      "systemVersion": "7.3.2"
+    }
+  }
+}

@@ -16,6 +16,7 @@ export type {
   DSA5CreatureIndex,
   WFRP4eCreatureIndex,
   MGT2eCreatureIndex,
+  WoDCreatureIndex,
   GenericCreatureIndex,
   AnyCreatureIndex,
 } from './types.js';

@@ -34,6 +34,13 @@ import { CampaignManagementTools } from './tools/campaign-management.js';
 import { OwnershipTools } from './tools/ownership.js';
 import { WFRP4eUpdateActorTools } from './tools/wfrp4e/update-actor.js';
 import { WFRP4eAddItemsTools } from './tools/wfrp4e/add-items.js';
+import { WoDRollPoolTools } from './tools/worldofdarkness/roll-pool.js';
+import { WoDApplyDamageTools } from './tools/worldofdarkness/apply-damage.js';
+import { WoDAdjustTraitTools } from './tools/worldofdarkness/adjust-trait.js';
+import { WoDSearchContentTools } from './tools/worldofdarkness/search-content.js';
+import { WoDAddItemsTools } from './tools/worldofdarkness/add-items.js';
+import { WoDCreateActorTools } from './tools/worldofdarkness/create-actor.js';
+import { WoDGetSheetTools } from './tools/worldofdarkness/get-sheet.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
 
@@ -1172,6 +1179,7 @@ async function startBackend(): Promise<void> {
   const { CosmereRpgAdapter } = await import('./systems/cosmere-rpg/adapter.js');
   const { WFRP4eAdapter } = await import('./systems/wfrp4e/adapter.js');
   const { MGT2eAdapter } = await import('./systems/mgt2e/adapter.js');
+  const { WorldOfDarknessAdapter } = await import('./systems/worldofdarkness/adapter.js');
 
   const systemRegistry = getSystemRegistry(logger);
   systemRegistry.register(new DnD5eAdapter());
@@ -1180,6 +1188,7 @@ async function startBackend(): Promise<void> {
   systemRegistry.register(new CosmereRpgAdapter());
   systemRegistry.register(new WFRP4eAdapter());
   systemRegistry.register(new MGT2eAdapter());
+  systemRegistry.register(new WorldOfDarknessAdapter());
 
   logger.info('System registry initialized', {
     supportedSystems: systemRegistry.getSupportedSystems(),
@@ -1215,6 +1224,14 @@ async function startBackend(): Promise<void> {
 
   const wfrp4eUpdateActorTools = new WFRP4eUpdateActorTools({ foundryClient, logger });
   const wfrp4eAddItemsTools = new WFRP4eAddItemsTools({ foundryClient, logger });
+
+  const wodRollPoolTools = new WoDRollPoolTools({ foundryClient, logger });
+  const wodApplyDamageTools = new WoDApplyDamageTools({ foundryClient, logger });
+  const wodAdjustTraitTools = new WoDAdjustTraitTools({ foundryClient, logger });
+  const wodSearchContentTools = new WoDSearchContentTools({ foundryClient, logger });
+  const wodAddItemsTools = new WoDAddItemsTools({ foundryClient, logger });
+  const wodCreateActorTools = new WoDCreateActorTools({ foundryClient, logger });
+  const wodGetSheetTools = new WoDGetSheetTools({ foundryClient, logger });
 
   // Initialize mapgen-style backend components for map generation
   let mapGenerationJobQueue: any = null;
@@ -1440,6 +1457,14 @@ async function startBackend(): Promise<void> {
 
     ...wfrp4eAddItemsTools.getToolDefinitions(),
 
+    ...wodRollPoolTools.getToolDefinitions(),
+    ...wodApplyDamageTools.getToolDefinitions(),
+    ...wodAdjustTraitTools.getToolDefinitions(),
+    ...wodSearchContentTools.getToolDefinitions(),
+    ...wodAddItemsTools.getToolDefinitions(),
+    ...wodCreateActorTools.getToolDefinitions(),
+    ...wodGetSheetTools.getToolDefinitions(),
+
     ...tokenManipulationTools.getToolDefinitions(),
 
     ...mapGenerationTools.getToolDefinitions(),
@@ -1593,6 +1618,43 @@ async function startBackend(): Promise<void> {
 
                 case 'wfrp4e-add-items':
                   result = await wfrp4eAddItemsTools.handleAddItems(args);
+
+                  break;
+
+                // World of Darkness (worldofdarkness) tools
+
+                case 'worldofdarkness-roll-pool':
+                  result = await wodRollPoolTools.handleRollPool(args);
+
+                  break;
+
+                case 'worldofdarkness-apply-damage':
+                  result = await wodApplyDamageTools.handleApplyDamage(args);
+
+                  break;
+
+                case 'worldofdarkness-adjust-trait':
+                  result = await wodAdjustTraitTools.handleAdjustTrait(args);
+
+                  break;
+
+                case 'worldofdarkness-search-content':
+                  result = await wodSearchContentTools.handleSearchContent(args);
+
+                  break;
+
+                case 'worldofdarkness-add-items':
+                  result = await wodAddItemsTools.handleAddItems(args);
+
+                  break;
+
+                case 'worldofdarkness-create-actor':
+                  result = await wodCreateActorTools.handleCreateActor(args);
+
+                  break;
+
+                case 'worldofdarkness-get-sheet':
+                  result = await wodGetSheetTools.handleGetSheet(args);
 
                   break;
 
