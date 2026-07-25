@@ -128,6 +128,9 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.updateWorldItems`] = this.handleUpdateWorldItems.bind(this);
     CONFIG.queries[`${modulePrefix}.getSystemSchema`] = this.handleGetSystemSchema.bind(this);
 
+    // Full-document actor import (preserves items + prototypeToken + img + flags)
+    CONFIG.queries[`${modulePrefix}.importActors`] = this.handleImportActors.bind(this);
+
     // Generic actor CRUD (any system, any type)
     CONFIG.queries[`${modulePrefix}.createActors`] = this.handleCreateActors.bind(this);
     CONFIG.queries[`${modulePrefix}.updateActors`] = this.handleUpdateActors.bind(this);
@@ -2037,6 +2040,30 @@ export class QueryHandlers {
       throw new Error('actors array is required and must contain at least one entry');
     }
     return this.dataAccess.createActors(data);
+  }
+
+  /**
+   * Import full exported Actor documents. Each doc is created verbatim via
+   * Actor.create (preserving embedded items, prototypeToken, img, system, flags)
+   * inside a name-resolved Actor folder. Idempotent by flags.wodchar.sourceId.
+   */
+  private async handleImportActors(data: {
+    actors: Array<Record<string, any>>;
+    folder?: string;
+    overwrite?: boolean;
+  }): Promise<any> {
+    const gmCheck = this.validateGMAccess();
+    if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+    this.dataAccess.validateFoundryState();
+    if (!Array.isArray(data?.actors) || data.actors.length === 0) {
+      throw new Error('actors array is required and must contain at least one entry');
+    }
+    for (const doc of data.actors) {
+      if (!doc || typeof doc !== 'object' || !doc.name || !doc.type || !doc.system) {
+        throw new Error('each actor document must have name, type, and system');
+      }
+    }
+    return this.dataAccess.importActors(data);
   }
 
   private async handleUpdateActors(data: {

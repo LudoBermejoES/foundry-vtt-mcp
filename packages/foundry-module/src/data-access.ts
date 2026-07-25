@@ -9816,6 +9816,137 @@ export class FoundryDataAccess {
     };
   }
 
+  /**
+   * Import full exported Actor documents. Unlike createActors (which builds a
+   * blank actor from a splat), this reconstructs each actor verbatim from its
+   * source document. Foundry's `Actor.create` natively creates the embedded
+   * `items`, the `prototypeToken`, `img`, `system`, and `flags` from the source
+   * data in one shot — nothing is re-mapped here.
+   *
+   * Each actor is placed in a name-resolved Actor folder (created on demand) and
+   * stamped with `flags.wodchar.sourceId` for idempotency. Re-importing a doc
+   * whose sourceId already exists is skipped, or (with `overwrite`) updated in
+   * place: system/name/img/prototypeToken/flags are replaced and the embedded
+   * items are re-created.
+   */
+  async importActors(params: {
+    actors: Array<Record<string, any>>;
+    folder?: string;
+    overwrite?: boolean;
+  }): Promise<{
+    results: Array<{ name: string; id: string | null; status: string; folder: string | null }>;
+    total: number;
+  }> {
+    const overwrite = params.overwrite === true;
+
+    // Resolve/create each folder only once per import.
+    const folderCache = new Map<string, string | null>();
+    const resolveFolder = async (name: string): Promise<string | null> => {
+      if (folderCache.has(name)) return folderCache.get(name)!;
+      const id = await this.getOrCreateFolder(name, 'Actor');
+      folderCache.set(name, id);
+      return id;
+    };
+
+    // Locate an existing actor previously imported with the same sourceId.
+    const findBySourceId = (sourceId: string): any =>
+      (game.actors as any)?.find((a: any) => {
+        const flagVal =
+          (typeof a.getFlag === 'function' && a.getFlag(this.moduleId, 'sourceId')) ||
+          a.getFlag?.('wodchar', 'sourceId') ||
+          a.flags?.wodchar?.sourceId;
+        return flagVal && flagVal === sourceId;
+      }) ?? null;
+
+    const results: Array<{
+      name: string;
+      id: string | null;
+      status: string;
+      folder: string | null;
+    }> = [];
+
+    for (const src of params.actors) {
+      // Shallow-clone so we can safely mutate folder/flags without touching the input.
+      const doc: Record<string, any> = { ...src };
+
+      // Idempotency key: an id already carried in the doc's flags, else an
+      // out-of-band top-level `sourceId`.
+      const flagSourceId =
+        doc.flags?.wodchar?.sourceId ?? doc.flags?.['wod20-combat']?.sourceId ?? undefined;
+      const sourceId: string | undefined = flagSourceId ?? doc.sourceId ?? undefined;
+      delete doc.sourceId; // not a real Actor document field
+
+      // Stamp the sourceId flag under a stable scope so re-imports can find it.
+      if (sourceId) {
+        doc.flags = { ...(doc.flags ?? {}) };
+        doc.flags.wodchar = { ...(doc.flags.wodchar ?? {}), sourceId };
+      }
+
+      // Resolve the target folder by name (param wins; else doc.folderName; else default).
+      const folderName: string = params.folder ?? doc.folderName ?? 'Foundry MCP Actors';
+      delete doc.folderName;
+      const folderId = await resolveFolder(folderName);
+      if (folderId) doc.folder = folderId;
+      else delete doc.folder;
+
+      const existing = sourceId ? findBySourceId(sourceId) : null;
+
+      if (existing) {
+        if (!overwrite) {
+          results.push({
+            name: existing.name,
+            id: existing.id,
+            status: 'skipped',
+            folder: existing.folder?.name ?? folderName,
+          });
+          continue;
+        }
+
+        // Update in place: replace the top-level document fields.
+        const patch: Record<string, any> = { name: doc.name, system: doc.system };
+        if (doc.img !== undefined) patch.img = doc.img;
+        if (doc.prototypeToken !== undefined) patch.prototypeToken = doc.prototypeToken;
+        if (doc.flags !== undefined) patch.flags = doc.flags;
+        if (folderId) patch.folder = folderId;
+        await existing.update(patch);
+
+        // Replace embedded items wholesale (delete then re-create from the doc).
+        if (Array.isArray(doc.items)) {
+          const existingItemIds = (existing.items as any)?.map((i: any) => i.id) ?? [];
+          if (existingItemIds.length > 0) {
+            await existing.deleteEmbeddedDocuments('Item', existingItemIds);
+          }
+          if (doc.items.length > 0) {
+            await existing.createEmbeddedDocuments('Item', doc.items);
+          }
+        }
+
+        results.push({
+          name: existing.name,
+          id: existing.id,
+          status: 'updated',
+          folder: folderName,
+        });
+        continue;
+      }
+
+      // Create verbatim — Actor.create builds embedded items + prototypeToken +
+      // img + system + flags from the source data.
+      const created = (await Actor.create(doc as any)) as any;
+      if (!created) {
+        throw new Error(`Foundry failed to create actor: ${doc.name}`);
+      }
+      results.push({
+        name: created.name,
+        id: created.id,
+        status: 'created',
+        folder: folderName,
+      });
+    }
+
+    return { results, total: results.length };
+  }
+
   /** Lowercases mgt2e skill keys before createActors processes them. */
   private normalizeMGT2eSkillKeys(system: Record<string, any>): Record<string, any> {
     const result: Record<string, any> = {};

@@ -40,6 +40,7 @@ import { WoDAdjustTraitTools } from './tools/worldofdarkness/adjust-trait.js';
 import { WoDSearchContentTools } from './tools/worldofdarkness/search-content.js';
 import { WoDAddItemsTools } from './tools/worldofdarkness/add-items.js';
 import { WoDCreateActorTools } from './tools/worldofdarkness/create-actor.js';
+import { WoDImportActorTools } from './tools/worldofdarkness/import-actor.js';
 import { WoDGetSheetTools } from './tools/worldofdarkness/get-sheet.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
@@ -1231,6 +1232,7 @@ async function startBackend(): Promise<void> {
   const wodSearchContentTools = new WoDSearchContentTools({ foundryClient, logger });
   const wodAddItemsTools = new WoDAddItemsTools({ foundryClient, logger });
   const wodCreateActorTools = new WoDCreateActorTools({ foundryClient, logger });
+  const wodImportActorTools = new WoDImportActorTools({ foundryClient, logger });
   const wodGetSheetTools = new WoDGetSheetTools({ foundryClient, logger });
 
   // Initialize mapgen-style backend components for map generation
@@ -1463,6 +1465,7 @@ async function startBackend(): Promise<void> {
     ...wodSearchContentTools.getToolDefinitions(),
     ...wodAddItemsTools.getToolDefinitions(),
     ...wodCreateActorTools.getToolDefinitions(),
+    ...wodImportActorTools.getToolDefinitions(),
     ...wodGetSheetTools.getToolDefinitions(),
 
     ...tokenManipulationTools.getToolDefinitions(),
@@ -1650,6 +1653,11 @@ async function startBackend(): Promise<void> {
 
                 case 'worldofdarkness-create-actor':
                   result = await wodCreateActorTools.handleCreateActor(args);
+
+                  break;
+
+                case 'worldofdarkness-import-actor':
+                  result = await wodImportActorTools.handleImportActor(args);
 
                   break;
 
