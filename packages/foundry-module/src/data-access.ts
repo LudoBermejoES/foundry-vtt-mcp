@@ -9849,12 +9849,17 @@ export class FoundryDataAccess {
     };
 
     // Locate an existing actor previously imported with the same sourceId.
+    // Read the flag via RAW property access, never actor.getFlag('wodchar', …):
+    // getFlag throws "Flag scope 'wodchar' is not valid or not currently active"
+    // for any scope that isn't core / the system id / the world id / an active
+    // module id. Foundry still stores arbitrary flag scopes as raw document data,
+    // so we read it directly.
+    const getProperty = (foundry as any)?.utils?.getProperty;
     const findBySourceId = (sourceId: string): any =>
       (game.actors as any)?.find((a: any) => {
-        const flagVal =
-          (typeof a.getFlag === 'function' && a.getFlag(this.moduleId, 'sourceId')) ||
-          a.getFlag?.('wodchar', 'sourceId') ||
-          a.flags?.wodchar?.sourceId;
+        const flagVal = getProperty
+          ? getProperty(a, 'flags.wodchar.sourceId')
+          : a.flags?.wodchar?.sourceId;
         return flagVal && flagVal === sourceId;
       }) ?? null;
 
