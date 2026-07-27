@@ -843,6 +843,416 @@ export class ActorCrud {
     }
   }
 
+  // ===== CREATE NPC ACTOR (D&D 5e) =====
+
+  async createNpcActor(data: {
+    name: string;
+    creatureType: string;
+    creatureSubtype: string;
+    size: string;
+    alignment: string;
+    cr: string | number;
+    hpAverage: number;
+    hpFormula: string;
+    acMode: string;
+    acValue?: number;
+    abilities: { str: number; dex: number; con: number; int: number; wis: number; cha: number };
+    savingThrows: string[];
+    walkSpeed: number;
+    flySpeed: number;
+    swimSpeed: number;
+    climbSpeed: number;
+    burrowSpeed: number;
+    hover: boolean;
+    darkvision: number;
+    blindsight: number;
+    tremorsense: number;
+    truesight: number;
+    specialSenses: string;
+    skills: Array<{ skill: string; proficiency: string }>;
+    damageImmunities: string[];
+    damageResistances: string[];
+    damageVulnerabilities: string[];
+    conditionImmunities: string[];
+    languages: string[];
+    languagesCustom: string;
+    biography: string;
+    sourceBook: string;
+    sourcePage: string;
+    sourceRules: string;
+  }): Promise<any> {
+    this.security.validateFoundryState();
+
+    try {
+      // 1. System guard
+      if ((game.system as any).id !== 'dnd5e') {
+        throw new Error(
+          `createNpcActor requires D&D 5e. ` + `Current system: "${(game.system as any).id}".`
+        );
+      }
+
+      // 2. Duplicate check by name — only against other NPCs, so a player
+      //    character sharing the name does not block NPC creation.
+      const existingActor = game.actors?.find((a: any) => a.name === data.name && a.type === 'npc');
+      if (existingActor) {
+        throw new Error(
+          `NPC "${data.name}" already exists (id: ${existingActor.id}). ` +
+            `Use a different name or remove the existing NPC first.`
+        );
+      }
+
+      // 3. Soft validation — collect warnings, do NOT block creation
+      const warnings: string[] = [];
+      const allDamageValues: Array<{ field: string; value: string }> = [
+        ...data.damageImmunities.map(v => ({ field: 'damageImmunities', value: v })),
+        ...data.damageResistances.map(v => ({ field: 'damageResistances', value: v })),
+        ...data.damageVulnerabilities.map(v => ({ field: 'damageVulnerabilities', value: v })),
+      ];
+      for (const { field, value } of allDamageValues) {
+        if (!NPC_DAMAGE_CANONICAL.has(value)) {
+          const msg = `Unknown damage type "${value}" in ${field} — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+      for (const value of data.conditionImmunities) {
+        if (!NPC_CONDITION_CANONICAL.has(value)) {
+          const msg = `Unknown condition "${value}" in conditionImmunities — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+
+      // 4. Normalize CR to float
+      const normalizedCR = npcNormalizeCR(data.cr);
+
+      // 5. Folder
+      const folderId = await this.actorResolver.getOrCreateFolder('Foundry MCP Creatures', 'Actor');
+
+      // 6. Ability scores with saving throw proficiency flags
+      const savingThrowSet = new Set(data.savingThrows);
+      const abilities = {
+        str: { value: data.abilities.str, proficient: savingThrowSet.has('str') ? 1 : 0 },
+        dex: { value: data.abilities.dex, proficient: savingThrowSet.has('dex') ? 1 : 0 },
+        con: { value: data.abilities.con, proficient: savingThrowSet.has('con') ? 1 : 0 },
+        int: { value: data.abilities.int, proficient: savingThrowSet.has('int') ? 1 : 0 },
+        wis: { value: data.abilities.wis, proficient: savingThrowSet.has('wis') ? 1 : 0 },
+        cha: { value: data.abilities.cha, proficient: savingThrowSet.has('cha') ? 1 : 0 },
+      };
+
+      // 7. AC block — omit flat when mode is "default"
+      const acBlock =
+        data.acMode === 'flat' ? { calc: 'flat', flat: data.acValue } : { calc: 'default' };
+
+      // 8. Build full actor data
+      const actorData: any = {
+        name: data.name,
+        type: 'npc',
+        system: {
+          abilities,
+          attributes: {
+            ac: acBlock,
+            hp: {
+              value: data.hpAverage,
+              max: data.hpAverage,
+              temp: 0,
+              tempmax: 0,
+              formula: data.hpFormula,
+            },
+            movement: {
+              walk: data.walkSpeed,
+              fly: data.flySpeed,
+              swim: data.swimSpeed,
+              climb: data.climbSpeed,
+              burrow: data.burrowSpeed,
+              units: 'ft',
+              hover: data.hover,
+              special: '',
+            },
+            senses: {
+              darkvision: data.darkvision,
+              blindsight: data.blindsight,
+              tremorsense: data.tremorsense,
+              truesight: data.truesight,
+              units: 'ft',
+              special: data.specialSenses,
+            },
+          },
+          details: {
+            cr: normalizedCR,
+            type: {
+              value: data.creatureType,
+              subtype: data.creatureSubtype,
+            },
+            alignment: data.alignment,
+            biography: {
+              value: data.biography,
+              public: '',
+            },
+            source: {
+              revision: 1,
+              rules: data.sourceRules,
+              book: data.sourceBook,
+              page: data.sourcePage,
+              custom: '',
+              license: '',
+            },
+          },
+          traits: {
+            size: NPC_SIZE_MAP[data.size] ?? 'med',
+            di: { value: data.damageImmunities, custom: '', bypasses: [] },
+            dr: { value: data.damageResistances, custom: '', bypasses: [] },
+            dv: { value: data.damageVulnerabilities, custom: '', bypasses: [] },
+            ci: { value: data.conditionImmunities, custom: '' },
+            languages: {
+              value: data.languages,
+              custom: data.languagesCustom,
+              communication: {},
+            },
+          },
+          skills: npcBuildSkillsBlock(data.skills),
+        },
+      };
+
+      // 9. Assign folder if available
+      if (folderId) {
+        actorData.folder = folderId;
+      }
+
+      // 10. Create actor
+      const actor = await Actor.create(actorData);
+      if (!actor) {
+        throw new Error(`Failed to create NPC actor "${data.name}"`);
+      }
+
+      this.security.auditLog('createNpcActor', { name: data.name, cr: normalizedCR }, 'success');
+
+      // 11. Return structured result
+      return {
+        success: true,
+        actor: {
+          id: actor.id,
+          name: actor.name,
+          cr: npcFormatCR(normalizedCR),
+          folder: folderId ?? null,
+        },
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to create NPC actor`, error);
+      this.security.auditLog(
+        'createNpcActor',
+        { name: data.name },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ─── Generic actor CRUD ─────────────────────────────────────────────────────
+
+  /**
+   * Create one or more actors of any type with arbitrary system data.
+   * Works for any Foundry game system — types and system fields are not validated here.
+   */
+  async createActors(params: {
+    actors: Array<{
+      name: string;
+      type: string;
+      img?: string;
+      system?: Record<string, any>;
+    }>;
+    folder?: string;
+  }): Promise<{ created: Array<{ id: string; name: string; type: string }>; total: number }> {
+    const folderName = params.folder ?? 'Foundry MCP Actors';
+    const folderId = await this.actorResolver.getOrCreateFolder(folderName, 'Actor');
+
+    const gameSystemId = (game as any).system?.id ?? '';
+
+    const docs = params.actors.map(a => {
+      const doc: Record<string, any> = { name: a.name, type: a.type };
+      if (a.img) doc.img = a.img;
+
+      // Merge system data, adding safe defaults for systems that require certain
+      // fields to exist during data preparation (avoids non-fatal init errors).
+      let systemData: Record<string, any> = a.system ?? {};
+
+      if (gameSystemId === 'mgt2e') {
+        // mgt2e's _prepareCreatureData iterates skills.specialities —
+        // ensure skills is at least an empty object to prevent a TypeError.
+        if (!systemData.skills) {
+          systemData = { skills: {}, ...systemData };
+        }
+        // Normalize skill keys to canonical lowercase (e.g. gunCombat → guncombat)
+        // to prevent duplicate entries that the localization system cannot resolve.
+        systemData = this.normalizeMGT2eSkillKeys(systemData);
+
+        // ── mgt2e traveller/npc convenience handling ────────────────────────
+        // When creating a traveller or npc, accept the same shorthand inputs
+        // as the (now-removed) create-mgt2e-traveller tool:
+        //   • Skills shorthand: { pilot: 2 } → { pilot: { value:2, trained:true } }
+        //   • Skill full object: { pilot: { value:0, trained:true, specialities:{...} } }
+        //   • Characteristics: lowercase keys (str/dex/…) normalised to uppercase +
+        //     show:true so they appear on the sheet; hits auto-calculated if omitted
+        //   • Details → sophont: { details: { career, species, … } } remapped to
+        //     system.sophont (system.details does not exist in mgt2e)
+        if (a.type === 'traveller' || a.type === 'npc') {
+          // 1. Skills: add id, auto-populate specialities, set parent value.
+          //    normalizeMGT2eSkillKeys already normalised keys and expanded number shorthands
+          //    to {value, trained}; this step adds the createActors-only extras.
+          const MGT2E_SKILL_SPECS: Record<string, string[]> = {
+            animals: ['handling', 'veterinary', 'training'],
+            art: ['performer', 'holography', 'instrument', 'visualMedia', 'write'],
+            athletics: ['dexterity', 'endurance', 'strength'],
+            drive: ['hovercraft', 'mole', 'track', 'walker', 'wheel'],
+            electronics: ['comms', 'computers', 'remoteOps', 'sensors'],
+            engineer: ['mDrive', 'jDrive', 'lifeSupport', 'power'],
+            flyer: ['airship', 'grav', 'ornithopter', 'rotor', 'wing'],
+            gunner: ['turret', 'ortillery', 'screen', 'capital'],
+            guncombat: ['archaic', 'energy', 'slug'],
+            heavyweapons: ['artillery', 'portable', 'vehicle'],
+            melee: ['unarmed', 'blade', 'bludgeon', 'natural'],
+            pilot: ['smallCraft', 'spacecraft', 'capitalShips'],
+            seafarer: ['oceanShips', 'personal', 'sail', 'submarine'],
+            tactics: ['military', 'naval'],
+          };
+          if (systemData.skills && typeof systemData.skills === 'object') {
+            const normSkills: Record<string, any> = {};
+            for (const [sk, sv] of Object.entries(systemData.skills as Record<string, any>)) {
+              const s =
+                sv && typeof sv === 'object' ? (sv as any) : { value: sv ?? 0, trained: true };
+              normSkills[sk] = { id: sk, value: s.value ?? 0, trained: s.trained ?? true, ...s };
+              // Parent value = min of caller-provided active spec values (before auto-populate).
+              if (s.specialities && typeof s.specialities === 'object') {
+                const activeValues: number[] = [];
+                for (const sd of Object.values(s.specialities as Record<string, any>)) {
+                  const v = Number((sd as any)?.value ?? 0);
+                  if (v > 0) activeValues.push(v);
+                }
+                if (activeValues.length > 0) normSkills[sk].value = Math.min(...activeValues);
+              }
+              // Auto-populate missing specialities (additive only).
+              const defaultSpecs = MGT2E_SKILL_SPECS[sk];
+              if (defaultSpecs) {
+                const existing: Record<string, any> = normSkills[sk].specialities ?? {};
+                const merged: Record<string, any> = { ...existing };
+                for (const specKey of defaultSpecs) {
+                  if (!(specKey in merged)) merged[specKey] = { value: 0, trained: false };
+                }
+                normSkills[sk].specialities = merged;
+              }
+            }
+            systemData = { ...systemData, skills: normSkills };
+          }
+
+          // 2. Characteristics: accept lowercase or uppercase keys,
+          //    ensure show:true, calculate hits from STR+DEX+END if missing.
+          if (systemData.characteristics && typeof systemData.characteristics === 'object') {
+            const normChars: Record<string, any> = {};
+            let str = 7,
+              dex = 7,
+              end = 7;
+            for (const [k, v] of Object.entries(
+              systemData.characteristics as Record<string, any>
+            )) {
+              const uk = k.toUpperCase();
+              let charVal: number;
+              if (typeof v === 'number') {
+                charVal = v;
+                normChars[uk] = { value: charVal, damage: 0, show: true };
+              } else if (v && typeof v === 'object') {
+                charVal = (v as any).value ?? 7;
+                normChars[uk] = { show: true, ...(v as any) };
+                if (normChars[uk].damage === undefined) normChars[uk].damage = 0;
+              } else {
+                charVal = 7;
+                normChars[uk] = { value: charVal, damage: 0, show: true };
+              }
+              if (uk === 'STR') str = charVal;
+              if (uk === 'DEX') dex = charVal;
+              if (uk === 'END') end = charVal;
+            }
+            systemData = { ...systemData, characteristics: normChars };
+            if (!systemData.hits) {
+              const hitsMax = str + dex + end;
+              systemData = { ...systemData, hits: { value: hitsMax, max: hitsMax } };
+            }
+          }
+
+          // 3. Remap system.details → system.sophont (system.details does not exist in mgt2e)
+          if (systemData.details && !systemData.sophont) {
+            const d = systemData.details as any;
+            const sophont: Record<string, any> = {};
+            for (const [k, v] of Object.entries(d)) {
+              if (k === 'career') {
+                sophont.profession = v;
+              } else if (k === 'description') {
+                systemData = { ...systemData, description: v };
+              } else {
+                sophont[k] = v;
+              }
+            }
+            if (Object.keys(sophont).length > 0) systemData = { ...systemData, sophont };
+            const { details: _removed, ...rest } = systemData;
+            systemData = rest;
+          }
+        }
+      }
+
+      // mgt2e software items: the spacecraft sheet reads i.system.software.bandwidth
+      // unconditionally — if the software sub-object is missing the sheet crashes.
+      // Inject safe defaults when the caller didn't supply them.
+      if (a.type === 'software' && gameSystemId === 'mgt2e' && !systemData.software) {
+        systemData = {
+          software: { class: 'spacecraft', type: 'generic', interface: 'none', bandwidth: 0 },
+          ...systemData,
+        };
+      }
+
+      doc.system = systemData;
+      if (folderId) doc.folder = folderId;
+      return doc;
+    });
+
+    const created = await Actor.createDocuments(docs as any[]);
+    if (!created || created.length === 0) {
+      throw new Error('Foundry failed to create actor documents');
+    }
+
+    return {
+      created: (created as any[]).map(a => ({ id: a.id, name: a.name, type: a.type })),
+      total: created.length,
+    };
+  }
+
+  /** Lowercases mgt2e skill keys before createActors processes them. */
+  private normalizeMGT2eSkillKeys(system: Record<string, any>): Record<string, any> {
+    const result: Record<string, any> = {};
+    for (const [key, val] of Object.entries(system)) {
+      if (key === 'skills' && val && typeof val === 'object' && !Array.isArray(val)) {
+        const normalized: Record<string, any> = {};
+        for (const [sk, sv] of Object.entries(val as Record<string, any>)) {
+          normalized[sk.toLowerCase()] = sv;
+        }
+        result['skills'] = normalized;
+      } else if (key.startsWith('skills.-=')) {
+        result[`skills.-=${key.slice('skills.-='.length).toLowerCase()}`] = val;
+      } else if (key.startsWith('skills.')) {
+        const rest = key.slice('skills.'.length);
+        const dotIdx = rest.indexOf('.');
+        const lk =
+          dotIdx === -1
+            ? rest.toLowerCase()
+            : rest.substring(0, dotIdx).toLowerCase() + rest.substring(dotIdx);
+        result[`skills.${lk}`] = val;
+      } else {
+        result[key] = val;
+      }
+    }
+    return result;
+  }
+
   /**
    * Update one or more existing actors by ID.
    * Merges supplied fields into the actor (top-level keys overwrite).
@@ -953,4 +1363,102 @@ export class ActorCrud {
     await Actor.deleteDocuments(existing);
     return { deleted: existing, total: existing.length };
   }
+}
+
+// =============================================================================
+// NPC creation helpers — module-level, used exclusively by createNpcActor
+// =============================================================================
+
+const NPC_DAMAGE_CANONICAL = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+
+const NPC_CONDITION_CANONICAL = new Set([
+  'blinded',
+  'charmed',
+  'deafened',
+  'exhaustion',
+  'frightened',
+  'grappled',
+  'incapacitated',
+  'invisible',
+  'paralyzed',
+  'petrified',
+  'poisoned',
+  'prone',
+  'restrained',
+  'stunned',
+  'unconscious',
+]);
+
+const NPC_SIZE_MAP: Record<string, string> = {
+  tiny: 'tiny',
+  small: 'sm',
+  medium: 'med',
+  large: 'lg',
+  huge: 'huge',
+  gargantuan: 'grg',
+};
+
+const NPC_SKILL_MAP: Record<string, string> = {
+  Acrobatics: 'acr',
+  'Animal Handling': 'ani',
+  Arcana: 'arc',
+  Athletics: 'ath',
+  Deception: 'dec',
+  History: 'his',
+  Insight: 'ins',
+  Intimidation: 'itm',
+  Investigation: 'inv',
+  Medicine: 'med',
+  Nature: 'nat',
+  Perception: 'prc',
+  Performance: 'prf',
+  Persuasion: 'per',
+  Religion: 'rel',
+  'Sleight of Hand': 'slt',
+  Stealth: 'ste',
+  Survival: 'sur',
+};
+
+function npcNormalizeCR(input: string | number): number {
+  if (typeof input === 'number') return input;
+  if (input.includes('/')) {
+    const [num, den] = input.split('/').map(Number);
+    return num / den;
+  }
+  return parseInt(input, 10);
+}
+
+function npcFormatCR(value: number): string {
+  if (value === 0) return '0';
+  if (value === 0.125) return '1/8';
+  if (value === 0.25) return '1/4';
+  if (value === 0.5) return '1/2';
+  return String(Math.round(value));
+}
+
+function npcBuildSkillsBlock(
+  skills: Array<{ skill: string; proficiency: string }>
+): Record<string, { value: number }> {
+  const result: Record<string, { value: number }> = {};
+  for (const { skill, proficiency } of skills) {
+    const key = NPC_SKILL_MAP[skill];
+    if (key) {
+      result[key] = { value: proficiency === 'expert' ? 2 : 1 };
+    }
+  }
+  return result;
 }
