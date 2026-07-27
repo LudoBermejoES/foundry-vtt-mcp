@@ -1,6 +1,6 @@
 import { MODULE_ID, ERROR_MESSAGES } from './constants.js';
 import { PermissionManager } from './permissions.js';
-import { transactionManager } from './transaction-manager.js';
+import { transactionManager, TransactionManager } from './transaction-manager.js';
 import { PersistentCreatureIndex } from './creature-index.js';
 import { FoundrySecurity } from './security.js';
 import { ActorResolver } from './actor-resolver.js';
@@ -10,6 +10,7 @@ import { ActorDirectory } from './actor-directory.js';
 import { RollManager } from './roll-manager.js';
 import { SceneTokenManager } from './scene-token-manager.js';
 import { ActorMechanics } from './actor-mechanics.js';
+import { ActorCrud } from './actor-crud.js';
 import {
   CompendiumSearch,
   CompendiumEntryFull,
@@ -198,6 +199,13 @@ export class FoundryDataAccess {
   private compendiumSearch: CompendiumSearch = new CompendiumSearch(
     this.security,
     this.persistentIndex
+  );
+  private transactions: TransactionManager = new TransactionManager();
+  private actorCrud: ActorCrud = new ActorCrud(
+    this.security,
+    this.actorResolver,
+    this.permissions,
+    this.transactions
   );
 
   constructor() {}
@@ -3838,115 +3846,47 @@ export class FoundryDataAccess {
   /**
    * Update one or more existing actors by ID.
    * Merges supplied fields into the actor (top-level keys overwrite).
+   *
+   * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async updateActors(
     updates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
   ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
-    const updatedActors: Array<{ id: string; name: string }> = [];
-
-    for (const u of updates) {
-      const actor = game.actors.get(u.id) as any;
-      if (!actor) throw new Error(`Actor not found: ${u.id}`);
-
-      const patch: Record<string, any> = {};
-      if (u.name !== undefined) patch.name = u.name;
-      if (u.img !== undefined) patch.img = u.img;
-      if (u.system !== undefined) {
-        // Build a single patch.system nested object so Foundry deep-merges everything
-        // in one pass without flat-key vs nested-key conflicts.
-        // Dot-notation keys (e.g. "crewed.passengers.-=actorId") are expanded to their
-        // nested equivalent — Foundry's mergeObject honours the "-=" deletion operator
-        // at any depth in a nested object, just as it does with top-level flat keys.
-        const systemPatch: Record<string, any> = {};
-        for (const [key, val] of Object.entries(u.system)) {
-          if (key.includes('.')) {
-            const parts = key.split('.');
-            let cur = systemPatch;
-            for (let i = 0; i < parts.length - 1; i++) {
-              if (!(parts[i] in cur)) cur[parts[i]] = {};
-              cur = cur[parts[i]];
-            }
-            cur[parts[parts.length - 1]] = val;
-          } else {
-            systemPatch[key] = val;
-          }
-        }
-        patch.system = systemPatch;
-      }
-
-      await actor.update(patch);
-      updatedActors.push({ id: actor.id, name: u.name ?? actor.name });
-    }
-
-    return { updated: updatedActors, total: updatedActors.length };
+    return this.actorCrud.updateActors(updates);
   }
 
   /**
    * Update one or more items embedded in an actor.
+   *
+   * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async updateActorItems(
     actorIdentifier: string,
     itemUpdates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
   ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
-    const actor =
-      (game.actors.get(actorIdentifier) as any) ??
-      (game.actors.find(
-        (a: any) => a.name?.toLowerCase() === actorIdentifier.toLowerCase()
-      ) as any);
-    if (!actor) throw new Error(`Actor not found: ${actorIdentifier}`);
-
-    const updated: Array<{ id: string; name: string }> = [];
-
-    for (const u of itemUpdates) {
-      const item = actor.items.get(u.id) as any;
-      if (!item) throw new Error(`Item ${u.id} not found on actor "${actor.name}"`);
-
-      const patch: Record<string, any> = {};
-      if (u.name !== undefined) patch.name = u.name;
-      if (u.img !== undefined) patch.img = u.img;
-      if (u.system !== undefined) patch.system = u.system;
-
-      await item.update(patch);
-      updated.push({ id: item.id, name: u.name ?? item.name });
-    }
-
-    return { updated, total: updated.length };
+    return this.actorCrud.updateActorItems(actorIdentifier, itemUpdates);
   }
 
   /**
    * Delete one or more items embedded in an actor.
+   *
+   * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async deleteActorItems(
     actorIdentifier: string,
     itemIds: string[]
   ): Promise<{ deleted: string[]; total: number }> {
-    const actor =
-      (game.actors.get(actorIdentifier) as any) ??
-      (game.actors.find(
-        (a: any) => a.name?.toLowerCase() === actorIdentifier.toLowerCase()
-      ) as any);
-    if (!actor) throw new Error(`Actor not found: ${actorIdentifier}`);
-
-    const existing = itemIds.filter(id => actor.items.get(id));
-    if (existing.length === 0)
-      throw new Error('None of the provided item IDs were found on this actor');
-
-    await actor.deleteEmbeddedDocuments('Item', existing);
-    return { deleted: existing, total: existing.length };
+    return this.actorCrud.deleteActorItems(actorIdentifier, itemIds);
   }
 
   /**
    * Delete one or more actors by ID.
+   *
+   * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async deleteActors(ids: string[]): Promise<{ deleted: string[]; total: number }> {
-    const existing = ids.filter(id => game.actors.get(id));
-    if (existing.length === 0) throw new Error('None of the provided actor IDs were found');
-
-    await Actor.deleteDocuments(existing);
-    return { deleted: existing, total: existing.length };
+    return this.actorCrud.deleteActors(ids);
   }
-
-  // ─── mgt2e ──────────────────────────────────────────────────────────────────
 }
 
 // =============================================================================
