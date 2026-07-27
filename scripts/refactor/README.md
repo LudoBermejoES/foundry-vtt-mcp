@@ -176,10 +176,15 @@ pass — that is the gate that catches a stage which transiently drops a delegat
 ### The trap this exists to avoid
 
 **A type-checker-only pass is wrong.** On this repo it reports **62 members from 2
-files** when the union reports **65 from 8**, because
+files** when the union reports **65**, from every scanned file except `socket-bridge.ts`
+and the fixture, because
 
-- the package `tsconfig.json` excludes `*.test.*` and `src/__fixtures__/**`, so the
-  five test files and the fake-Foundry fixture are **not in the program at all**; and
+- the package `tsconfig.json` excludes `*.test.*` and `src/__fixtures__/**`, so **every**
+  test file and the fake-Foundry fixture are **not in the program at all** (six test
+  files as of `8d14064`, and the count grows with each characterization change — the
+  selfcheck derives the invisible set from the exclude rule rather than freezing its
+  size, because freezing it turned a green tool red for a reason that was not about the
+  code); and
 - `settings.ts` reaches through `bridge?.dataAccess?.X`, `main.ts` through
   `this.queryHandlers?.dataAccess.X`, and the tests through
   `const da = await makeDataAccess()` — all `any`, so the checker cannot see the
@@ -190,10 +195,15 @@ files** when the union reports **65 from 8**, because
 So the answer is the **union** of a checker pass and a receiver-text pass. The tool runs
 both, plus a deliberately over-approximating third pass (any property access, string
 element access, or bare string literal whose name is a class member) as a sensitivity
-check. On this class the over-approximation adds exactly two false positives, both
+check. On this class the over-approximation adds two false positives in shipped files, both
 explainable and worth re-checking rather than assuming: `moduleId` is `settings.ts`'s
 own private field, and `requestRollStateSave` at `main.ts:550` is a socket-message
-discriminant (`data.type === 'requestRollStateSave'`), not a facade call.
+discriminant (`data.type === 'requestRollStateSave'`), not a facade call. It also picks
+up `describe('<memberName>', …)` titles from the test files — `extractPF2eSpellSlots`
+and `extractDnD5eSpellSlots` since `8d14064` — which are bare string literals matching a
+**private** member name, so they can never be a reach. The selfcheck's rule is therefore
+"the two documented names, else sited only inside a test file"; an unexplained extra in
+`queries.ts`, `main.ts` or `settings.ts` fails.
 
 `--checker-scope files` adds the scanned files to the program instead of taking the
 tsconfig's file list as-is. Useful for diagnosis; the default (`tsconfig`) is what
@@ -247,8 +257,10 @@ are untouched. It reconstructs its fixtures from git history and asserts, in 31 
    calls it identical, `ts.createScanner` still reports a bogus difference, and a dropped
    comment is a token difference.
 6. **The surface extractor reproduces the checker-only trap** on the current tree: 62
-   from 2 files vs 65 from 8, six files invisible to the checker, the three named
-   checker-misses, exactly the two named false positives.
+   members from 2 files vs 65 from the union, every test file and the fixture invisible to
+   the checker, the three named checker-misses, and every over-approximation extra
+   explainable. The three file-census assertions here are **derived** from the tsconfig
+   exclude rule and the scanned list, not frozen as integers.
 7. **`diff` is empty against itself and aborts on a tool mismatch.**
 
 If (6) starts failing at 65, check whether a pass deliberately changed the facade's

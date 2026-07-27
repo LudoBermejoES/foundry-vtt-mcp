@@ -200,15 +200,30 @@ check(
   capture.passes.checker.count === 62 && capture.passes.checker.contributingFiles.length === 2,
   `got ${capture.passes.checker.count} from ${capture.passes.checker.contributingFiles.length} files`
 );
+// Derived, not frozen: the tsconfig excludes `**/*.test.*` and `src/__fixtures__/**`, so
+// exactly the test files and the fixture are invisible to the checker. Asserting a count
+// instead went stale the moment a pass added a sixth test file (`character-reader.test.ts`,
+// the characterization precondition for 5.2) — a green tool reported red for a reason that
+// was not about the code, which is the failure mode this whole file exists to prevent.
+const isTestOrFixture = f => /\.test\.ts$/.test(f) || f.includes('/__fixtures__/');
+const scanned = capture.tool.files;
 check(
-  'the checker cannot see the 5 test files or the fixture',
-  capture.passes.checker.filesNotInProgram.length === 6,
-  capture.passes.checker.filesNotInProgram.join(', ')
+  'the checker cannot see any test file or the fixture, and can see everything else',
+  capture.passes.checker.filesNotInProgram.slice().sort().join(',') ===
+    scanned.filter(isTestOrFixture).sort().join(','),
+  `notInProgram=[${capture.passes.checker.filesNotInProgram.join(', ')}] scanned-test-or-fixture=[${scanned.filter(isTestOrFixture).join(', ')}]`
 );
+// 65 is the gate figure and is asserted exactly. The contributing-file list is derived:
+// every scanned file reaches the facade except `socket-bridge.ts` and the fixture.
+const expectedContributors = scanned
+  .filter(f => !f.endsWith('/socket-bridge.ts') && !f.includes('/__fixtures__/'))
+  .sort();
 check(
-  'the union finds 65 across 8 files',
-  capture.passes.union.count === 65 && capture.passes.union.contributingFiles.length === 8,
-  `got ${capture.passes.union.count} across ${capture.passes.union.contributingFiles.length}`
+  'the union finds 65 members, contributed by every scanned file but socket-bridge and the fixture',
+  capture.passes.union.count === 65 &&
+    capture.passes.union.contributingFiles.slice().sort().join(',') ===
+      expectedContributors.join(','),
+  `got ${capture.passes.union.count} across [${capture.passes.union.contributingFiles.join(', ')}]`
 );
 const missed = capture.surface.filter(m => !m.passes.includes('checker')).map(m => m.name);
 check(
@@ -216,11 +231,24 @@ check(
   ['attachRollButtonHandlers', 'saveRollState', 'updateRollButtonMessage'].every(n => missed.includes(n)) && missed.length === 3,
   missed.join(', ')
 );
-const extras = capture.passes.overApproximation.extras.map(e => e.name).sort();
+// The invariant is "every extra is explainable and none is a real reach", not a frozen
+// name list. Two are documented in the README and live in shipped files: `moduleId` is
+// settings.ts's own private field, `requestRollStateSave` is a socket-message discriminant
+// at main.ts:550. Everything else must be sited ONLY inside a test file — those are
+// `describe('<memberName>', …)` titles, which the sensitivity pass counts as bare string
+// literals by design. An extra appearing in queries.ts / main.ts / settings.ts that is NOT
+// one of the two documented names is a possible real reach and fails here.
+const overExtras = capture.passes.overApproximation.extras;
+const documentedFalsePositives = ['moduleId', 'requestRollStateSave'];
+const siteIsTestOrFixture = s => isTestOrFixture(s.replace(/:\d+$/, ''));
+const unexplained = overExtras.filter(
+  e => !documentedFalsePositives.includes(e.name) && !e.sites.every(siteIsTestOrFixture)
+);
 check(
-  'the over-approximation adds exactly the two documented false positives',
-  extras.join(',') === 'moduleId,requestRollStateSave',
-  extras.join(', ')
+  'every over-approximation extra is explainable: the two documented ones, else test-file-only',
+  documentedFalsePositives.every(n => overExtras.some(e => e.name === n)) &&
+    unexplained.length === 0,
+  `unexplained=[${unexplained.map(e => `${e.name} @ ${e.sites.join(' ')}`).join('; ')}] all=[${overExtras.map(e => e.name).join(', ')}]`
 );
 check('the census is internally consistent', capture.census.consistent === true, JSON.stringify(capture.census));
 check(
