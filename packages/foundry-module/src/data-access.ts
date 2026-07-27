@@ -25,79 +25,13 @@ import {
   CompendiumEntryFull,
   CompendiumSearchResult,
 } from './compendium-search.js';
-// Local type definitions to avoid shared package import issues
-interface CharacterInfo {
-  id: string;
-  name: string;
-  type: string;
-  img?: string;
-  /**
-   * Opt-in (`include: ['flags']`). Absent unless requested, so default
-   * responses stay the size they have always been.
-   *
-   * MIRROR WARNING: these types are duplicated, not shared. The same two fields
-   * exist in `shared/src/types.ts` (`CharacterInfo`) and are consumed on the
-   * server in `systems/worldofdarkness/extract.ts`. Change one, change all.
-   */
-  flags?: Record<string, unknown>;
-  /** Opt-in (`include: ['prototypeToken']`). The token ART, curated — see extractTokenArt. */
-  prototypeToken?: Record<string, unknown>;
-  /** Echo of the `include` keys the module actually honoured. See getCharacterInfo. */
-  included?: string[];
-  system: Record<string, unknown>;
-  items: CharacterItem[];
-  effects: CharacterEffect[];
-  actions?: any[]; // PF2e actions (strikes, spells, etc.)
-  itemVariants?: any[]; // Item rule element variants (ChoiceSet, etc.)
-  itemToggles?: any[]; // Item rule element toggles (RollOption, ToggleProperty, equipped)
-  spellcasting?: SpellcastingEntry[]; // PF2e/D&D 5e spellcasting entries
-}
-
-interface SpellcastingEntry {
-  id: string;
-  name: string;
-  tradition?: string | undefined; // arcane, divine, primal, occult (PF2e)
-  type: string; // prepared, spontaneous, innate, focus (PF2e) or class name (5e)
-  ability?: string | undefined; // spellcasting ability (int, wis, cha)
-  dc?: number | undefined;
-  attack?: number | undefined;
-  slots?: Record<string, { value: number; max: number }> | undefined; // spell slots per level/rank
-  spells: SpellInfo[];
-}
-
-interface SpellInfo {
-  id: string;
-  name: string;
-  level: number; // spell level/rank
-  prepared?: boolean | undefined; // for prepared casters
-  expended?: boolean | undefined; // has this spell slot been used
-  traits?: string[] | undefined;
-  actionCost?: string | undefined; // 1, 2, 3, reaction, free
-  // Targeting info - helps Claude decide whether to specify targets
-  range?: string | undefined; // "touch", "self", "60 feet", etc.
-  target?: string | undefined; // "1 creature", "self", "area", etc.
-  area?: string | undefined; // "20-foot radius", "30-foot cone", etc. (for template spells)
-}
-
-interface CharacterItem {
-  id: string;
-  name: string;
-  type: string;
-  img?: string;
-  system: Record<string, unknown>;
-}
-
-interface CharacterEffect {
-  id: string;
-  name: string;
-  icon?: string;
-  disabled: boolean;
-  duration?: {
-    type: string;
-    duration?: number;
-    remaining?: number;
-  };
-}
+// The three character-reading types the facade still names. `CharacterItem` and
+// `CharacterEffect` are deliberately NOT imported: they are referenced only from inside
+// `CharacterInfo`'s own declaration, so importing either would be an unused import under
+// noUnusedLocals — the same asymmetry as `CreatedActorInfo` above, and the reason the
+// travelling set has to be computed as a TRANSITIVE closure. `SpellInfo` goes when
+// `extractSpellcastingData` moves; `SpellcastingEntry` goes when its bridge does.
+import { CharacterInfo, SpellcastingEntry, SpellInfo } from './character-reader.js';
 
 interface SceneInfo {
   id: string;
