@@ -1069,6 +1069,31 @@ export class CompendiumSearch {
 
   /**
    * Find best matching compendium entry for creature type
+   *
+   * DEAD SURFACE, and `public` only by accident. It was
+   * `private async findBestCompendiumMatch` on FoundryDataAccess (data-access.ts:3227 at
+   * `c5c6bfa`); pass 5.1 (`e4c0409`) widened it so the facade wrapper it left behind could
+   * reach it across the new class boundary, and pass 5.3 (`f4b0fd2`) deleted that wrapper's
+   * caller — the dead `createActorFromCompendium` — without restoring the modifier. Nothing
+   * in the repository has called it since: `grep -rn findBestCompendiumMatch packages shared
+   * scripts` matches this declaration and nothing else, and the surface extractor reports it
+   * as the one dead member of CompendiumSearch (6 reached + 1 dead = 7 non-private).
+   *
+   * Do NOT "fix" this by restoring `private`. Pass 5.2 tried, and it does not compile:
+   * with no caller left anywhere, `private` makes it TS6133 ("declared but its value is
+   * never read") under the root tsconfig's `noUnusedLocals`. The two honest states are
+   * `private` WITH a caller, or deleted. So the remedy for this member is DELETION, and it
+   * belongs to the boundary change that also removes the eight dead facade members
+   * (getRollState, saveRollButtonMessageId, getRollButtonMessageId,
+   * getRollStateFromMessage, requestRollStateSave, broadcastRollState, cleanOldRollStates,
+   * getCharacterEntity) — not to a relocation pass, and not to this module's own commit.
+   *
+   * Worth recording precisely, because the bridge-visibility requirement pass 5.2 added
+   * calls this "dead surface … type-checking cleanly, failing no test, and indistinguishable
+   * in a diff from a member that is public because something calls it". The first clause is
+   * only true WHILE the modifier stays wide: honest visibility makes tsc report it at once.
+   * `noUnusedLocals` is therefore the mechanical detector the requirement says does not
+   * exist — but only for a pass that attempts the restoration rather than assuming it.
    */
   async findBestCompendiumMatch(
     creatureType: string,
