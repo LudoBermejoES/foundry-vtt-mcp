@@ -774,14 +774,35 @@ cd packages/foundry-module && node_modules/.bin/tsc --noEmit   # Stage B
 
 ## 8. Open questions
 
-1. **Is the WebRTC transport in play in the production deployment?** The ~47 KB
-   per-actor size sits suspiciously close to `WEBRTC_CONSTANTS.CHUNK_SIZE`
-   (50 KiB) and `MAX_MESSAGE_SIZE` (64 KiB). If `connectionType` resolved to
-   `webrtc`, chunked reassembly (with its own 30 s `CHUNK_TIMEOUT_MS`) is a
-   second candidate root cause for Item 1, and `batchSize` would need to be
-   byte-aware rather than count-aware. **Resolve by instrumenting
-   `activeConnectionType` before implementing 1a** — a log line is enough, and
-   it changes the design of the chunking heuristic.
+1. ~~**Is the WebRTC transport in play in the production deployment?**~~
+   **CLOSED — and the question turned out not to need answering.** Chunking was
+   implemented **byte-aware**, which is correct under either transport, so the
+   design no longer depends on which one production resolves to. Recorded so it
+   is not re-derived:
+   - `foundry.connectionType` defaults to `'auto'` (`config.ts:19`), so _either_
+     transport is reachable in a given deployment without any config change. Any
+     count-based scheme would have been correct only by luck.
+   - **The server→Foundry direction does not chunk.** `WebRTCPeer.sendMessage`
+     (`webrtc-peer.ts:180-192`) is a bare
+     `this.dataChannel.send(JSON.stringify(message))` wrapped in a try/catch that
+     only calls `logger.error` — it never throws to the caller and never splits.
+     Only the **Foundry→server** direction chunks
+     (`foundry-module/src/webrtc-connection.ts:206-218`, which does check
+     `size > CHUNK_SIZE`). So on a WebRTC deployment an oversized `mcp-query` is
+     dropped, the module never receives it, and the caller observes exactly the
+     `Query timeout: foundry-mcp-bridge.importActors` reported in Item 1 — with no
+     error anywhere except one server-side log line. This asymmetry is a second,
+     independent root cause for Item 1 on that transport and is _not_ fixed by
+     this change; it is bounded by the byte budget (see below) and left as debt in
+     §9.
+   - Implemented budget: `DEFAULT_CHUNK_BUDGET_BYTES = WEBRTC_CONSTANTS.CHUNK_SIZE`
+     (50 KiB) per query, overridable per call via `chunkBytes` (max
+     `MAX_MESSAGE_SIZE`, 64 KiB). A single document is indivisible, so one over
+     budget is sent alone; if it also exceeds `MAX_MESSAGE_SIZE` **and** the active
+     transport is WebRTC, the request is refused before any write, naming the
+     ceiling. On WebSocket it is not refused, because `ws`'s 100 MiB default means
+     it works there today and refusing would be a regression.
+
 2. **Should `batchSize` default to 1 or 2?** 1 is provably safe from today's
    evidence; 2 halves the round-trips. Needs one timing measurement of a
    single-actor `importActors` on the production world to decide.
@@ -818,3 +839,12 @@ Following the precedent spec's §6 — recorded so it is not rediscovered:
   (`foundry-connector.ts:215-234`), erasing the evidence that the Foundry side
   finished. A `logger.warn` on an unmatched response id would have made Item 1
   diagnosable in minutes.
+- **`WebRTCPeer.sendMessage` (`webrtc-peer.ts:180-192`) neither chunks nor
+  reports.** It has no `size > CHUNK_SIZE` branch (unlike its module-side
+  counterpart, `webrtc-connection.ts:206-218`) and swallows the send failure in a
+  `catch` that only logs, so the promise in `query()` is left to time out. On a
+  WebRTC deployment any oversized outbound query therefore fails silently. Items 1a
+  and the byte budget make the WoD import stay under the cap, but the transport bug
+  affects **every** tool with a large payload and is not fixed here. Fixing it means
+  porting the module's chunking loop into `sendMessage` and, at minimum, rethrowing
+  the send error.

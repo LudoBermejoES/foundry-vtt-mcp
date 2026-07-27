@@ -399,6 +399,19 @@ export class QueryHandlers {
       foundryVersion: game.version,
       worldId: game.world?.id,
       userId: game.user?.id,
+      // Additive. The two deploys (server bundle / Foundry module) are
+      // independent, so a NEW server can talk to an OLD module. Most new
+      // parameters degrade safely when ignored — but `importActors.dryRun` does
+      // NOT: an old module silently drops the flag and performs a real import,
+      // turning "predict, write nothing" into "write everything". The server
+      // pre-flights this list and refuses a dry run unless the capability is
+      // advertised. Append-only; never remove an entry.
+      moduleVersion: (game as any)?.modules?.get?.(MODULE_ID)?.version ?? null,
+      capabilities: [
+        'importActors.perActorResults',
+        'importActors.dryRun',
+        'importActors.stopOnError',
+      ],
     };
   }
 
@@ -2046,22 +2059,26 @@ export class QueryHandlers {
    * Import full exported Actor documents. Each doc is created verbatim via
    * Actor.create (preserving embedded items, prototypeToken, img, system, flags)
    * inside a name-resolved Actor folder. Idempotent by flags.wodchar.sourceId.
+   *
+   * Only whole-request preconditions throw here — a bad *document* must not.
+   * The per-document `name`/`type`/`system` check used to live in a pre-flight
+   * loop at this level, which aborted the entire batch (and therefore discarded
+   * the outcomes of every other actor) for one malformed entry. It now runs
+   * inside `importActors`' per-actor try/catch, so that entry comes back as
+   * `status: 'failed'` with a reason and the rest of the batch still reports.
    */
   private async handleImportActors(data: {
     actors: Array<Record<string, any>>;
     folder?: string;
     overwrite?: boolean;
+    dryRun?: boolean;
+    stopOnError?: boolean;
   }): Promise<any> {
     const gmCheck = this.validateGMAccess();
     if (!gmCheck.allowed) return { error: 'Access denied', success: false };
     this.dataAccess.validateFoundryState();
     if (!Array.isArray(data?.actors) || data.actors.length === 0) {
       throw new Error('actors array is required and must contain at least one entry');
-    }
-    for (const doc of data.actors) {
-      if (!doc || typeof doc !== 'object' || !doc.name || !doc.type || !doc.system) {
-        throw new Error('each actor document must have name, type, and system');
-      }
     }
     return this.dataAccess.importActors(data);
   }

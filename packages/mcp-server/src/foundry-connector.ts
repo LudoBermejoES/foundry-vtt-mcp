@@ -356,7 +356,23 @@ export class FoundryConnector {
     }
   }
 
-  async query(method: string, data?: any): Promise<any> {
+  /**
+   * Issue one `mcp-query` to the Foundry module and await its `mcp-response`.
+   *
+   * `timeoutMs` is an OPTIONAL PER-CALL override, defaulting to
+   * `config.foundry.queryTimeout` (itself defaulting to the historical 10 000 ms).
+   * Per-call rather than global on purpose: a blanket raise would also relax the
+   * deadline for every fast query, so only callers that knowingly issue
+   * long-running Foundry work (e.g. actor import) pass one.
+   *
+   * A timed-out query is NOT cancelled Foundry-side — there is no abort hook in
+   * Foundry's CONFIG.queries contract. We drop the pendingQueries entry and
+   * reject; the module keeps running and its late `mcp-response` is discarded by
+   * handleMessage (`pending` is undefined). Any write already in flight therefore
+   * completes and persists unreported. Callers that write must be idempotent and
+   * reconcilable — see importActors' flags.wodchar.sourceId stamping.
+   */
+  async query(method: string, data?: any, timeoutMs?: number): Promise<any> {
     // Check connection based on active connection type
     const isConnected =
       this.activeConnectionType === 'webrtc'
@@ -367,19 +383,22 @@ export class FoundryConnector {
       throw new Error('Not connected to Foundry VTT module');
     }
 
+    const effectiveTimeout = timeoutMs ?? this.config.queryTimeout ?? 10000;
+
     const queryId = `query-${++this.queryIdCounter}`;
     this.logger.debug('Sending query to Foundry', {
       method,
       data,
       queryId,
       connectionType: this.activeConnectionType,
+      timeoutMs: effectiveTimeout,
     });
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingQueries.delete(queryId);
         reject(new Error(`Query timeout: ${method}`));
-      }, 10000); // 10 second timeout
+      }, effectiveTimeout);
 
       this.pendingQueries.set(queryId, { resolve, reject, timeout });
 

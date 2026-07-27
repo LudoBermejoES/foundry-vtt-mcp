@@ -16,6 +16,22 @@ const ConfigSchema = z.object({
     reconnectAttempts: z.number().min(1).max(20).default(5),
     reconnectDelay: z.number().min(100).max(30000).default(1000),
     connectionTimeout: z.number().min(1000).max(60000).default(10000),
+    /**
+     * Default deadline for a single `mcp-query` round-trip to the Foundry module.
+     *
+     * This is the DEFAULT, not a global override: `FoundryConnector.query()` takes
+     * an optional per-call `timeoutMs`, and only callers that know they are issuing
+     * long-running Foundry work (e.g. a full-document actor import, where cost
+     * scales with the actor's embedded-item count and cannot be known in advance)
+     * pass one. Raising this value globally would weaken the guard for the ~90
+     * genuinely fast queries, so the default stays at the historical 10 000 ms and
+     * behaviour is bit-identical until someone sets FOUNDRY_QUERY_TIMEOUT.
+     *
+     * NOTE: distinct from the (currently unread) `connectionTimeout` above — that
+     * env var may already be set by users, so it is left alone rather than
+     * silently given a new meaning.
+     */
+    queryTimeout: z.number().min(1000).max(600000).default(10000),
     connectionType: z.enum(['websocket', 'webrtc', 'auto']).default('auto'),
     protocol: z.enum(['ws', 'wss']).default('ws'), // Legacy, used only for WebSocket mode
     remoteMode: z.boolean().default(false),
@@ -46,6 +62,20 @@ const ConfigSchema = z.object({
     pythonCommand: z.string().default('python/python.exe'), // Will be platform-specific
   }),
   toolResponseMaxChars: z.number().min(256).max(500000).default(20000),
+  /**
+   * World-of-Darkness-specific settings.
+   *
+   * `importDir` gates the OPT-IN path-intake surface of
+   * `worldofdarkness-import-actor`. It is intentionally unset by default: with it
+   * unset the tool refuses `actorPath`/`actorPaths` outright, so no deployment
+   * (least of all a `foundry.remoteMode` one, where paths resolve on the SERVER's
+   * disk, not the caller's) grows a file-read surface unless an operator asks for
+   * one. See tools/worldofdarkness/import-path.ts for the resolution rules.
+   */
+  wod: z.object({
+    importDir: z.string().optional(),
+    importMaxBytes: z.number().min(1024).max(33554432).default(2097152),
+  }),
   server: z.object({
     name: z.string().default('foundry-mcp-server'),
     version: z.string().default('0.4.17'),
@@ -66,6 +96,7 @@ const rawConfig = {
     reconnectAttempts: parseInt(process.env.FOUNDRY_RECONNECT_ATTEMPTS || '5', 10),
     reconnectDelay: parseInt(process.env.FOUNDRY_RECONNECT_DELAY || '1000', 10),
     connectionTimeout: parseInt(process.env.FOUNDRY_CONNECTION_TIMEOUT || '10000', 10),
+    queryTimeout: parseInt(process.env.FOUNDRY_QUERY_TIMEOUT || '10000', 10),
     connectionType: (process.env.FOUNDRY_CONNECTION_TYPE || 'auto') as
       | 'websocket'
       | 'webrtc'
@@ -88,6 +119,10 @@ const rawConfig = {
     pythonCommand: process.env.COMFYUI_PYTHON_COMMAND || 'python/python.exe',
   },
   toolResponseMaxChars: parseInt(process.env.TOOL_RESPONSE_MAX_CHARS || '20000', 10),
+  wod: {
+    importDir: process.env.WOD_IMPORT_DIR,
+    importMaxBytes: parseInt(process.env.WOD_IMPORT_MAX_BYTES || '2097152', 10),
+  },
   server: {
     name: process.env.SERVER_NAME || 'foundry-mcp-server',
     version: process.env.SERVER_VERSION || '1.0.0',

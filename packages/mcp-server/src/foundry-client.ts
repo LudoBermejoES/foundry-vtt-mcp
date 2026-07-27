@@ -54,17 +54,21 @@ export class FoundryClient {
     return this.connector.getConnectionType();
   }
 
-  async query(method: string, data?: any): Promise<any> {
+  /**
+   * `timeoutMs` is an optional per-call override of `foundry.queryTimeout`.
+   * Existing callers that omit it are unaffected.
+   */
+  async query(method: string, data?: any, timeoutMs?: number): Promise<any> {
     if (!this.connector.isConnected()) {
       throw new Error(
         'Foundry VTT module not connected. Please ensure Foundry is running and the MCP Bridge module is enabled.'
       );
     }
 
-    this.logger.debug('Sending query to Foundry module', { method, data });
+    this.logger.debug('Sending query to Foundry module', { method, data, timeoutMs });
 
     try {
-      const result = await this.connector.query(method, data);
+      const result = await this.connector.query(method, data, timeoutMs);
       this.logger.debug('Query successful', { method, hasResult: !!result });
       return result;
     } catch (error) {

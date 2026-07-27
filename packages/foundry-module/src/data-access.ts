@@ -9833,17 +9833,55 @@ export class FoundryDataAccess {
     actors: Array<Record<string, any>>;
     folder?: string;
     overwrite?: boolean;
+    /**
+     * Resolve every doc against the existing actors' sourceIds and report the
+     * verdict WITHOUT writing anything — no Actor.create, no update, and no
+     * folder creation either (getOrCreateFolder writes, so dry runs only *look
+     * up* folders). Verdicts are reported as would-create / would-update /
+     * would-skip.
+     */
+    dryRun?: boolean;
+    /**
+     * `true` restores the historical abort-on-first-failure behaviour. Default
+     * `false`: one bad document must not discard the outcomes already known for
+     * the others (see the per-actor try/catch below).
+     */
+    stopOnError?: boolean;
   }): Promise<{
-    results: Array<{ name: string; id: string | null; status: string; folder: string | null }>;
+    results: Array<{
+      name: string;
+      id: string | null;
+      status: string;
+      folder: string | null;
+      sourceId?: string | null;
+      error?: string;
+    }>;
     total: number;
+    counts: {
+      created: number;
+      updated: number;
+      skipped: number;
+      failed: number;
+      wouldCreate: number;
+      wouldUpdate: number;
+      wouldSkip: number;
+    };
+    dryRun?: boolean;
+    aborted?: boolean;
   }> {
     const overwrite = params.overwrite === true;
+    const dryRun = params.dryRun === true;
+    const stopOnError = params.stopOnError === true;
 
-    // Resolve/create each folder only once per import.
+    // Resolve/create each folder only once per import. Under dryRun we never
+    // create — an absent folder resolves to null and the verdict still stands.
     const folderCache = new Map<string, string | null>();
     const resolveFolder = async (name: string): Promise<string | null> => {
       if (folderCache.has(name)) return folderCache.get(name)!;
-      const id = await this.getOrCreateFolder(name, 'Actor');
+      const id = dryRun
+        ? ((game.folders as any)?.find((f: any) => f.name === name && f.type === 'Actor')?.id ??
+          null)
+        : await this.getOrCreateFolder(name, 'Actor');
       folderCache.set(name, id);
       return id;
     };
@@ -9868,88 +9906,185 @@ export class FoundryDataAccess {
       id: string | null;
       status: string;
       folder: string | null;
+      sourceId?: string | null;
+      error?: string;
     }> = [];
 
+    let aborted = false;
+
     for (const src of params.actors) {
-      // Shallow-clone so we can safely mutate folder/flags without touching the input.
-      const doc: Record<string, any> = { ...src };
+      // ─── Per-actor error capture ──────────────────────────────────────────
+      // Everything from here to the end of the iteration is wrapped: a document
+      // Foundry refuses, or one that fails validation, is recorded as
+      // `status: 'failed'` with a reason and the batch CONTINUES. Previously a
+      // throw from inside this loop propagated out of handleImportActors and
+      // collapsed the whole call into a single error string, discarding the
+      // outcomes of every actor already imported — including, on a timeout, the
+      // actors that were really created (a timed-out query is not cancelled, so
+      // they persist). `stopOnError: true` opts back into the old behaviour.
+      const label = typeof src?.name === 'string' && src.name ? src.name : '(unnamed)';
+      try {
+        // Per-document validation lives HERE, not in a separate pre-flight loop
+        // that aborts the batch, so an invalid doc costs exactly one entry.
+        if (!src || typeof src !== 'object' || Array.isArray(src)) {
+          throw new Error('actor document must be an object');
+        }
+        const missing = ['name', 'type', 'system'].filter(f => !(src as any)[f]);
+        if (missing.length > 0) {
+          throw new Error(`actor document is missing required field(s): ${missing.join(', ')}`);
+        }
 
-      // Idempotency key: an id already carried in the doc's flags, else an
-      // out-of-band top-level `sourceId`.
-      const flagSourceId =
-        doc.flags?.wodchar?.sourceId ?? doc.flags?.['wod20-combat']?.sourceId ?? undefined;
-      const sourceId: string | undefined = flagSourceId ?? doc.sourceId ?? undefined;
-      delete doc.sourceId; // not a real Actor document field
+        // Shallow-clone so we can safely mutate folder/flags without touching the input.
+        const doc: Record<string, any> = { ...src };
 
-      // Stamp the sourceId flag under a stable scope so re-imports can find it.
-      if (sourceId) {
-        doc.flags = { ...(doc.flags ?? {}) };
-        doc.flags.wodchar = { ...(doc.flags.wodchar ?? {}), sourceId };
-      }
+        // Idempotency key: an id already carried in the doc's flags, else an
+        // out-of-band top-level `sourceId`.
+        const flagSourceId =
+          doc.flags?.wodchar?.sourceId ?? doc.flags?.['wod20-combat']?.sourceId ?? undefined;
+        const sourceId: string | undefined = flagSourceId ?? doc.sourceId ?? undefined;
+        delete doc.sourceId; // not a real Actor document field
 
-      // Resolve the target folder by name (param wins; else doc.folderName; else default).
-      const folderName: string = params.folder ?? doc.folderName ?? 'Foundry MCP Actors';
-      delete doc.folderName;
-      const folderId = await resolveFolder(folderName);
-      if (folderId) doc.folder = folderId;
-      else delete doc.folder;
+        // Stamp the sourceId flag under a stable scope so re-imports can find it.
+        //
+        // RECONCILABILITY — this ordering is load-bearing. The flag is written
+        // into `doc` BEFORE `Actor.create(doc)`, so the created actor carries its
+        // sourceId atomically as part of its creation; there is no window in
+        // which an actor exists un-stamped. That is what makes a retry of a
+        // failed or timed-out batch safe: whatever the previous attempt created
+        // is findable by findBySourceId and comes back skipped (or updated with
+        // `overwrite`), never duplicated. Do NOT refactor this into a
+        // post-create setFlag/update — a timeout between the two would leave an
+        // invisible actor and the next retry would duplicate it.
+        if (sourceId) {
+          doc.flags = { ...(doc.flags ?? {}) };
+          doc.flags.wodchar = { ...(doc.flags.wodchar ?? {}), sourceId };
+        }
 
-      const existing = sourceId ? findBySourceId(sourceId) : null;
+        // Resolve the target folder by name (param wins; else doc.folderName; else default).
+        const folderName: string = params.folder ?? doc.folderName ?? 'Foundry MCP Actors';
+        delete doc.folderName;
+        const folderId = await resolveFolder(folderName);
+        if (folderId) doc.folder = folderId;
+        else delete doc.folder;
 
-      if (existing) {
-        if (!overwrite) {
+        const existing = sourceId ? findBySourceId(sourceId) : null;
+
+        if (existing) {
+          if (!overwrite) {
+            results.push({
+              name: existing.name,
+              id: existing.id,
+              status: dryRun ? 'would-skip' : 'skipped',
+              folder: existing.folder?.name ?? folderName,
+              sourceId: sourceId ?? null,
+            });
+            continue;
+          }
+
+          if (dryRun) {
+            results.push({
+              name: existing.name,
+              id: existing.id,
+              status: 'would-update',
+              folder: existing.folder?.name ?? folderName,
+              sourceId: sourceId ?? null,
+            });
+            continue;
+          }
+
+          // Update in place: replace the top-level document fields.
+          const patch: Record<string, any> = { name: doc.name, system: doc.system };
+          if (doc.img !== undefined) patch.img = doc.img;
+          if (doc.prototypeToken !== undefined) patch.prototypeToken = doc.prototypeToken;
+          if (doc.flags !== undefined) patch.flags = doc.flags;
+          if (folderId) patch.folder = folderId;
+          await existing.update(patch);
+
+          // Replace embedded items wholesale (delete then re-create from the doc).
+          if (Array.isArray(doc.items)) {
+            const existingItemIds = (existing.items as any)?.map((i: any) => i.id) ?? [];
+            if (existingItemIds.length > 0) {
+              await existing.deleteEmbeddedDocuments('Item', existingItemIds);
+            }
+            if (doc.items.length > 0) {
+              await existing.createEmbeddedDocuments('Item', doc.items);
+            }
+          }
+
           results.push({
             name: existing.name,
             id: existing.id,
-            status: 'skipped',
-            folder: existing.folder?.name ?? folderName,
+            status: 'updated',
+            folder: folderName,
+            sourceId: sourceId ?? null,
           });
           continue;
         }
 
-        // Update in place: replace the top-level document fields.
-        const patch: Record<string, any> = { name: doc.name, system: doc.system };
-        if (doc.img !== undefined) patch.img = doc.img;
-        if (doc.prototypeToken !== undefined) patch.prototypeToken = doc.prototypeToken;
-        if (doc.flags !== undefined) patch.flags = doc.flags;
-        if (folderId) patch.folder = folderId;
-        await existing.update(patch);
-
-        // Replace embedded items wholesale (delete then re-create from the doc).
-        if (Array.isArray(doc.items)) {
-          const existingItemIds = (existing.items as any)?.map((i: any) => i.id) ?? [];
-          if (existingItemIds.length > 0) {
-            await existing.deleteEmbeddedDocuments('Item', existingItemIds);
-          }
-          if (doc.items.length > 0) {
-            await existing.createEmbeddedDocuments('Item', doc.items);
-          }
+        if (dryRun) {
+          results.push({
+            name: doc.name,
+            id: null,
+            status: 'would-create',
+            folder: folderName,
+            sourceId: sourceId ?? null,
+            // An actor with no resolvable sourceId cannot be reconciled after a
+            // failed run: a retry has no key to find it by and WILL duplicate it.
+            // Surfaced rather than silently accepted.
+            ...(sourceId ? {} : { error: 'no sourceId — a retry would duplicate this actor' }),
+          });
+          continue;
         }
 
+        // Create verbatim — Actor.create builds embedded items + prototypeToken +
+        // img + system + flags from the source data.
+        const created = (await Actor.create(doc as any)) as any;
+        if (!created) {
+          throw new Error(`Foundry failed to create actor: ${doc.name}`);
+        }
         results.push({
-          name: existing.name,
-          id: existing.id,
-          status: 'updated',
+          name: created.name,
+          id: created.id,
+          status: 'created',
           folder: folderName,
+          sourceId: sourceId ?? null,
+          ...(sourceId ? {} : { error: 'no sourceId — a retry would duplicate this actor' }),
         });
-        continue;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        results.push({
+          name: label,
+          id: null,
+          status: 'failed',
+          folder: null,
+          sourceId: (src as any)?.flags?.wodchar?.sourceId ?? (src as any)?.sourceId ?? null,
+          error: reason,
+        });
+        console.warn(`[${this.moduleId}] importActors: actor "${label}" failed: ${reason}`);
+        if (stopOnError) {
+          aborted = true;
+          break;
+        }
       }
-
-      // Create verbatim — Actor.create builds embedded items + prototypeToken +
-      // img + system + flags from the source data.
-      const created = (await Actor.create(doc as any)) as any;
-      if (!created) {
-        throw new Error(`Foundry failed to create actor: ${doc.name}`);
-      }
-      results.push({
-        name: created.name,
-        id: created.id,
-        status: 'created',
-        folder: folderName,
-      });
     }
 
-    return { results, total: results.length };
+    const counts = {
+      created: results.filter(r => r.status === 'created').length,
+      updated: results.filter(r => r.status === 'updated').length,
+      skipped: results.filter(r => r.status === 'skipped').length,
+      failed: results.filter(r => r.status === 'failed').length,
+      wouldCreate: results.filter(r => r.status === 'would-create').length,
+      wouldUpdate: results.filter(r => r.status === 'would-update').length,
+      wouldSkip: results.filter(r => r.status === 'would-skip').length,
+    };
+
+    return {
+      results,
+      total: results.length,
+      counts,
+      ...(dryRun ? { dryRun: true } : {}),
+      ...(aborted ? { aborted: true } : {}),
+    };
   }
 
   /** Lowercases mgt2e skill keys before createActors processes them. */
