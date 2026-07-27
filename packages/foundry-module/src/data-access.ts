@@ -9960,33 +9960,57 @@ export class FoundryDataAccess {
           doc.flags.wodchar = { ...(doc.flags.wodchar ?? {}), sourceId };
         }
 
-        // Resolve the target folder by name (param wins; else doc.folderName; else default).
-        const folderName: string = params.folder ?? doc.folderName ?? 'Foundry MCP Actors';
+        // What the caller actually asked for — no default applied yet, because the
+        // default is only correct when CREATING. Applying it unconditionally used to
+        // clobber an existing actor's folder on every update that omitted `folder`,
+        // silently relocating already-filed actors into "Foundry MCP Actors".
+        const requestedFolderName: string | null = params.folder ?? doc.folderName ?? null;
         delete doc.folderName;
-        const folderId = await resolveFolder(folderName);
-        if (folderId) doc.folder = folderId;
-        else delete doc.folder;
 
+        // Look the actor up BEFORE deciding the folder: the decision depends on
+        // whether this is a create or an update.
         const existing = sourceId ? findBySourceId(sourceId) : null;
+        const existingFolderName: string | null = existing?.folder?.name ?? null;
+
+        // A skip writes nothing, so settle it BEFORE resolving any folder —
+        // `resolveFolder` calls getOrCreateFolder, which creates. The actor does not
+        // move, so the folder it reports is the one it is already in.
+        if (existing && !overwrite) {
+          results.push({
+            name: existing.name,
+            id: existing.id,
+            status: dryRun ? 'would-skip' : 'skipped',
+            folder: existingFolderName,
+            sourceId: sourceId ?? null,
+          });
+          continue;
+        }
+
+        // From here this operation intends to write (or, under dryRun, to predict
+        // that write). The folder is computed ONCE so the dryRun verdict and the
+        // write it predicts cannot disagree: an update with no explicit folder keeps
+        // the actor where it is, a create falls back to the default.
+        const effectiveFolderName: string | null = existing
+          ? (requestedFolderName ?? existingFolderName)
+          : (requestedFolderName ?? 'Foundry MCP Actors');
+
+        // Only touch placement when the caller named a folder (or we are creating),
+        // so an update that keeps its folder never reaches getOrCreateFolder.
+        const willSetFolder = existing ? requestedFolderName !== null : true;
+        const folderId =
+          willSetFolder && effectiveFolderName ? await resolveFolder(effectiveFolderName) : null;
+        if (!existing) {
+          if (folderId) doc.folder = folderId;
+          else delete doc.folder;
+        }
 
         if (existing) {
-          if (!overwrite) {
-            results.push({
-              name: existing.name,
-              id: existing.id,
-              status: dryRun ? 'would-skip' : 'skipped',
-              folder: existing.folder?.name ?? folderName,
-              sourceId: sourceId ?? null,
-            });
-            continue;
-          }
-
           if (dryRun) {
             results.push({
               name: existing.name,
               id: existing.id,
               status: 'would-update',
-              folder: existing.folder?.name ?? folderName,
+              folder: effectiveFolderName,
               sourceId: sourceId ?? null,
             });
             continue;
@@ -9997,7 +10021,7 @@ export class FoundryDataAccess {
           if (doc.img !== undefined) patch.img = doc.img;
           if (doc.prototypeToken !== undefined) patch.prototypeToken = doc.prototypeToken;
           if (doc.flags !== undefined) patch.flags = doc.flags;
-          if (folderId) patch.folder = folderId;
+          if (willSetFolder && folderId) patch.folder = folderId;
           await existing.update(patch);
 
           // Replace embedded items wholesale (delete then re-create from the doc).
@@ -10015,7 +10039,7 @@ export class FoundryDataAccess {
             name: existing.name,
             id: existing.id,
             status: 'updated',
-            folder: folderName,
+            folder: effectiveFolderName,
             sourceId: sourceId ?? null,
           });
           continue;
@@ -10026,7 +10050,7 @@ export class FoundryDataAccess {
             name: doc.name,
             id: null,
             status: 'would-create',
-            folder: folderName,
+            folder: effectiveFolderName,
             sourceId: sourceId ?? null,
             // An actor with no resolvable sourceId cannot be reconciled after a
             // failed run: a retry has no key to find it by and WILL duplicate it.
@@ -10046,7 +10070,7 @@ export class FoundryDataAccess {
           name: created.name,
           id: created.id,
           status: 'created',
-          folder: folderName,
+          folder: effectiveFolderName,
           sourceId: sourceId ?? null,
           ...(sourceId ? {} : { error: 'no sourceId — a retry would duplicate this actor' }),
         });

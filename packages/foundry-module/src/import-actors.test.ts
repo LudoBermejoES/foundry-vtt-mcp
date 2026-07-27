@@ -413,3 +413,100 @@ describe('QueryHandlers.handleImportActors', () => {
     expect(pong).toMatchObject({ status: 'ok', worldId: 'test-world' });
   });
 });
+
+// ─── Requirement: folder placement is preserved on update, and dryRun predicts it ──
+//
+// Regression: the folder was resolved BEFORE the create/update branch as
+// `params.folder ?? doc.folderName ?? 'Foundry MCP Actors'`, so an overwrite that
+// named no folder clobbered the actor's existing placement. Six production PCs
+// filed under "Estudiantes" were silently moved into "Foundry MCP Actors". Worse,
+// the dry run reported the EXISTING folder while the real run applied the default,
+// so it could not warn about the move it was about to cause.
+
+describe('folder placement on update', () => {
+  it('keeps the actor where it is when the caller names no folder', async () => {
+    const da = await makeDataAccess();
+    await da.importActors({ actors: [doc('Lena', 'src-lena')], folder: 'Estudiantes' });
+    world.folderCreateCalls.length = 0;
+
+    const res = await da.importActors({ actors: [doc('Lena', 'src-lena')], overwrite: true });
+
+    expect(res.results[0].status).toBe('updated');
+    expect(res.results[0].folder).toBe('Estudiantes');
+    expect(world.actors.find(a => a.name === 'Lena')!.folder).toEqual({ name: 'Estudiantes' });
+    // Nothing may be created for a folder we never intended to set: getOrCreateFolder writes.
+    expect(world.folderCreateCalls).toEqual([]);
+  });
+
+  it('moves the actor when the caller does name a folder', async () => {
+    const da = await makeDataAccess();
+    await da.importActors({ actors: [doc('Lena', 'src-lena')], folder: 'Estudiantes' });
+
+    const res = await da.importActors({
+      actors: [doc('Lena', 'src-lena')],
+      folder: 'Camarilla',
+      overwrite: true,
+    });
+
+    expect(res.results[0].folder).toBe('Camarilla');
+    // The fake's update() assigns the patch verbatim, so `folder` is the raw id here
+    // (real Foundry resolves it to a Folder document). Resolve it back to a name.
+    const moved = world.actors.find(a => a.name === 'Lena')! as any;
+    const movedId = typeof moved.folder === 'string' ? moved.folder : moved.folder?.id;
+    expect(world.folders.find(f => f.id === movedId)?.name).toBe('Camarilla');
+  });
+
+  it('still applies the default folder when creating with none named', async () => {
+    const da = await makeDataAccess();
+    const res = await da.importActors({ actors: [doc('Nueva', 'src-nueva')] });
+    expect(res.results[0].status).toBe('created');
+    expect(res.results[0].folder).toBe('Foundry MCP Actors');
+    expect(world.folderCreateCalls).toEqual(['Foundry MCP Actors']);
+  });
+
+  it('does not create a folder for an actor it only skips', async () => {
+    const da = await makeDataAccess();
+    await da.importActors({ actors: [doc('Lena', 'src-lena')], folder: 'Estudiantes' });
+    world.folderCreateCalls.length = 0;
+
+    // No overwrite: the actor exists, so this is a no-op and must write nothing.
+    const res = await da.importActors({ actors: [doc('Lena', 'src-lena')], folder: 'Otra' });
+
+    expect(res.results[0].status).toBe('skipped');
+    expect(world.folderCreateCalls).toEqual([]);
+  });
+
+  // The one that stops this regressing: run the dry run and the real write over the
+  // SAME input and require the folder they report to be identical. The two code
+  // paths are separate and can drift apart again; this makes drift a test failure.
+  it.each([
+    ['update, no folder named', { overwrite: true } as Record<string, unknown>],
+    ['update, folder named', { folder: 'Camarilla', overwrite: true }],
+    ['create, no folder named', { sourceId: 'src-fresh' }],
+    ['create, folder named', { folder: 'Camarilla', sourceId: 'src-fresh' }],
+  ])('dryRun predicts the folder the real run applies (%s)', async (_label, opts) => {
+    const { sourceId = 'src-lena', ...params } = opts as any;
+    const seed = async () => {
+      const da = await makeDataAccess();
+      // Only pre-file the actor for the update cases.
+      if (sourceId === 'src-lena') {
+        await da.importActors({ actors: [doc('Lena', 'src-lena')], folder: 'Estudiantes' });
+      }
+      return da;
+    };
+
+    installWorld();
+    const daDry = await seed();
+    const dry = await daDry.importActors({
+      actors: [doc('Lena', sourceId)],
+      ...params,
+      dryRun: true,
+    });
+
+    installWorld();
+    const daReal = await seed();
+    const real = await daReal.importActors({ actors: [doc('Lena', sourceId)], ...params });
+
+    expect(dry.results[0].folder).toBe(real.results[0].folder);
+  });
+});
