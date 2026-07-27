@@ -253,6 +253,3 @@ export class PermissionManager {
     // Previously logged permission checks for security auditing
   }
 }
-
-// Export singleton instance
-export const permissionManager = new PermissionManager();

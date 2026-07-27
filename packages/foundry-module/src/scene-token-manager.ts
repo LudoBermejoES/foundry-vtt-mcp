@@ -6,7 +6,7 @@
 // from the actor-creation flow (createActorFromCompendium*) and are a better
 // fit for a future actor-creation module than for this one.
 import { ERROR_MESSAGES, TOKEN_DISPOSITIONS } from './constants.js';
-import { permissionManager } from './permissions.js';
+import { PermissionManager } from './permissions.js';
 import { FoundrySecurity } from './security.js';
 
 interface SceneInfo {
@@ -47,7 +47,10 @@ interface SceneNote {
 }
 
 export class SceneTokenManager {
-  constructor(private security: FoundrySecurity) {}
+  constructor(
+    private security: FoundrySecurity,
+    private permissions: PermissionManager
+  ) {}
 
   /**
    * Get active scene information
@@ -324,7 +327,7 @@ export class SceneTokenManager {
     this.security.validateFoundryState();
 
     // Use permission system
-    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+    const permissionCheck = this.permissions.checkWritePermission('modifyScene', {
       targetIds: [data.tokenId],
     });
 
@@ -381,7 +384,7 @@ export class SceneTokenManager {
     this.security.validateFoundryState();
 
     // Use permission system
-    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+    const permissionCheck = this.permissions.checkWritePermission('modifyScene', {
       targetIds: [data.tokenId],
     });
 
@@ -440,7 +443,7 @@ export class SceneTokenManager {
     this.security.validateFoundryState();
 
     // Use permission system
-    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+    const permissionCheck = this.permissions.checkWritePermission('modifyScene', {
       targetIds: data.tokenIds,
     });
 
@@ -558,7 +561,7 @@ export class SceneTokenManager {
     this.security.validateFoundryState();
 
     // Use permission system
-    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+    const permissionCheck = this.permissions.checkWritePermission('modifyScene', {
       targetIds: [data.tokenId],
     });
 

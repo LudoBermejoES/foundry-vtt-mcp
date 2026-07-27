@@ -5,11 +5,14 @@
 // resolving the target player, tracking per-button in-flight/rolled state,
 // and the plain rollDice() passthrough used by combat maneuvers.
 import { MODULE_ID } from './constants.js';
-import { permissionManager } from './permissions.js';
+import { PermissionManager } from './permissions.js';
 import { FoundrySecurity } from './security.js';
 
 export class RollManager {
-  constructor(private security: FoundrySecurity) {}
+  constructor(
+    private security: FoundrySecurity,
+    private permissions: PermissionManager
+  ) {}
 
   /**
    * Validate write operation permissions
@@ -22,10 +25,10 @@ export class RollManager {
   }> {
     this.security.validateFoundryState();
 
-    const permissionCheck = permissionManager.checkWritePermission(operation);
+    const permissionCheck = this.permissions.checkWritePermission(operation);
 
     // Audit the permission check
-    permissionManager.auditPermissionCheck(operation, permissionCheck);
+    this.permissions.auditPermissionCheck(operation, permissionCheck);
 
     return {
       allowed: permissionCheck.allowed,

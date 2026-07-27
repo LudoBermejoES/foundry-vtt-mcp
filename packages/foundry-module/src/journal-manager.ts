@@ -1,13 +1,14 @@
 // Extracted from data-access.ts as part of the God-class split (behaviour-preserving).
 // See docs/refactor-data-access.md for the module map.
-import { permissionManager } from './permissions.js';
+import { PermissionManager } from './permissions.js';
 import { FoundrySecurity } from './security.js';
 import { ActorResolver } from './actor-resolver.js';
 
 export class JournalManager {
   constructor(
     private security: FoundrySecurity,
-    private resolver: ActorResolver
+    private resolver: ActorResolver,
+    private permissions: PermissionManager
   ) {}
 
   /**
@@ -22,7 +23,7 @@ export class JournalManager {
     this.security.validateFoundryState();
 
     // Use permission system for journal creation
-    const permissionCheck = permissionManager.checkWritePermission('createActor', {
+    const permissionCheck = this.permissions.checkWritePermission('createActor', {
       quantity: 1, // Treat journal creation similar to actor creation for permissions
     });
 
@@ -203,7 +204,7 @@ export class JournalManager {
     this.security.validateFoundryState();
 
     // Use permission system for journal updates - treating as createActor permission level
-    const permissionCheck = permissionManager.checkWritePermission('createActor', {
+    const permissionCheck = this.permissions.checkWritePermission('createActor', {
       quantity: 1, // Treat journal updates similar to actor creation for permissions
     });
 

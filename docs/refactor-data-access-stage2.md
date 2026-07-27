@@ -147,7 +147,41 @@ inside the new `findActorsByFlag`/`readActorFlags`/`extractTokenArt` block
 onward except the untouched tail of cluster A, and everything past that is
 clean). That gives a concrete, checkable safety boundary for staging order.
 
-### Stage 1 — Actor mechanics builders (cluster D) → `actor-mechanics.ts`
+### Stage 1 — Actor mechanics builders (cluster D) → `actor-mechanics.ts` — ✅ **LANDED**
+
+> **Landed** as OpenSpec change `extract-actor-mechanics-builders`. What this
+> section predicted held, with three corrections worth carrying forward:
+>
+> 1. **The byte-for-byte diff recommendation below is now a spec requirement,
+>    not advice.** `foundry-module-architecture` gained _"A move of hand-written
+>    bodies is gated by a per-method text diff, not by type-checking alone"_,
+>    which binds stages 2–4 as well: enumerate the mechanical re-pointings in
+>    advance, diff every moved body against its pre-move source, and treat any
+>    other differing line as a defect to revert rather than a difference to
+>    justify. It also requires characterization tests pinning **the document
+>    handed to Foundry** to exist and pass against the **pre-move** source
+>    before a move starts.
+> 2. **"Zero tests here" was true when written and was fixed first.**
+>    `14d392c` added `actor-mechanics.test.ts` — 41 cases across all nine
+>    builders plus `createNpcActor`, on a shared fake-Foundry fixture — as the
+>    precondition. The move consumed it; it did not author it.
+> 3. **"Private helpers pulled with it: none" was right about methods and wrong
+>    about module scope.** There are no private sibling _methods_, but nine
+>    **module-level** bindings at the foot of `data-access.ts` were reachable
+>    only from these nine bodies and had to move with them: `slugify` (all three
+>    of its callers moved), `ATTACK_DAMAGE_CANONICAL`,
+>    `ATTACK_PROPERTY_CANONICAL`, `AURA_DAMAGE_CANONICAL`,
+>    `ATTACK_WITH_SAVE_DAMAGE_CANONICAL`, and the four spellcasting slot tables.
+>    Leaving them behind would have been a circular import
+>    (`actor-mechanics.ts` → `data-access.ts`) and an R2 violation; `tsc`'s
+>    `noUnusedLocals` forces the question either way. The `NPC_*` set and the
+>    three `npc*` functions stayed, with `createNpcActor`.
+>
+> Measured outcome: 36 re-pointings applied (9 + 9 + 18, exactly as predicted),
+> nine bodies byte-identical to baseline + those re-pointings, one further
+> permitted difference (a `prettier` reflow of the one line an enumerated
+> re-pointing pushed past 100 columns), externally-reached surface diff empty,
+> `data-access.ts` 7,221 → ~5,480.
 
 - **Moves**: `useItem`, `addSaveFeatureToActor`, `addAttackToActor`,
   `addAuraToActor`, `addPassiveFeatureToActor`, `addAttackWithSaveToActor`,
@@ -327,7 +361,7 @@ change might have added):
 | `6613-6623`: "RECONCILABILITY — this ordering is load-bearing... Do NOT refactor this into a post-create setFlag/update..."    | `importActors` sourceId-stamp-before-create ordering                                                                                                                                        | Stage 5 / permanent tail                                                                                                                        | None — self-contained                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `6641-6643`: "A skip writes nothing, so settle it BEFORE resolving any folder"                                                 | `importActors` no-op-path ordering                                                                                                                                                          | Stage 5 / permanent tail                                                                                                                        | None                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `6662-6664`: "so an update that keeps its folder never reaches getOrCreateFolder"                                              | `importActors` folder-placement ordering                                                                                                                                                    | Stage 5 / permanent tail                                                                                                                        | None                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `4903-4905`, `5081-5083`, `5316-5318`, `5588-5590`: four "soft validation — collect warnings, never/do NOT block" comments     | `createNpcActor` (**cluster C**, not D — correcting the first doc), `addAttackToActor` (D), `addAuraToActor` (D), `addAttackWithSaveToActor` (D, the fourth one the first doc didn't count) | 3c (createNpcActor) / Stage 1 (the other three)                                                                                                 | None — all four are self-contained one-liners, no cross-file reference                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `4903-4905`, `5081-5083`, `5316-5318`, `5588-5590`: four "soft validation — collect warnings, never/do NOT block" comments     | `createNpcActor` (**cluster C**, not D — correcting the first doc), `addAttackToActor` (D), `addAuraToActor` (D), `addAttackWithSaveToActor` (D, the fourth one the first doc didn't count) | 3c (createNpcActor) / ✅ Stage 1 (the other three — **moved**, see below)                                                                       | None — all four are self-contained one-liners, no cross-file reference. **But do not locate them by grepping `never`:** the fourth reads "both damage groups unified" and `createNpcActor`'s reads "do NOT block creation", so the grep at the head of this section finds only two of the four. The reliable locator is the `// 3. Soft validation` marker prefix.                                                                                                                                                                                                                                                          |
 
 **Net: the doc's claim of "10 load-bearing comments, all in `importActors`" is
 now 12+ once the concurrent change's two new comments are counted (2430,
@@ -335,6 +369,15 @@ now 12+ once the concurrent change's two new comments are counted (2430,
 single comment in this whole file whose correctness depends on which file
 its sibling ends up in.** Everything else is genuinely a verbatim, no-edits
 move.
+
+**Post-stage-1 status:** the three cluster-D soft-validation comments now live
+in `actor-mechanics.ts` (~462 `addAttackToActor`, ~697 `addAuraToActor`, ~969
+`addAttackWithSaveToActor`), moved verbatim; `createNpcActor`'s stayed in
+`data-access.ts` (~4564) with the method. The per-method body diff the spec now
+requires is what proves that mechanically — a dropped or reflowed comment is a
+diff line, and the default disposition of an unexplained diff line is revert.
+All line numbers in this section predate stage 1 and are stale by roughly
+−1,740 lines below the cluster; recount rather than trusting them.
 
 ## Risk ranking, actor-CRUD called out specifically
 
@@ -404,8 +447,8 @@ reports 45), because the in-flight WoD-read-path change just added
 
 **Cheapest tests worth adding first, in priority order:**
 
-1. **One characterization test per stage-1/D method, before moving it** —
-   not full coverage, just "call it with a representative payload against a
+1. ✅ **DONE — One characterization test per stage-1/D method, before moving it**
+   — not full coverage, just "call it with a representative payload against a
    fake actor, snapshot the resulting embedded-item `system` data and the
    `auditLog` call." These nine methods build near-identical shapes (item
    data + warnings array + `createEmbeddedDocuments` call), so one shared
@@ -415,6 +458,15 @@ reports 45), because the in-flight WoD-read-path change just added
    This is the single highest-value thing to do before stage 1, because it's
    the stage with the most "long body, easy to mis-transcribe, currently zero
    tests" risk in the whole plan.
+
+   Landed as `14d392c`: the shared fixture is
+   `src/__fixtures__/fake-foundry.ts` and the tests are
+   `src/actor-mechanics.test.ts` (41 cases, all nine builders plus
+   `createNpcActor`). They assert whole documents with `toEqual`, not spot
+   checks, and they were green against the **pre-move** source before stage 1
+   started — which is now the spec's requirement, not just good practice. The
+   remaining recommendations below (2 and 3) are unchanged and still pending.
+
 2. **A handful of `searchCompendium`/`listCreaturesByCriteria` tests** before
    stage 2 — at minimum one per system-specific `passesXCriteria` branch (5
    systems) plus one exercising the `searchCompendium ↔
