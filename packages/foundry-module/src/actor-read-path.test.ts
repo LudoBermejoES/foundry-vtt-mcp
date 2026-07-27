@@ -17,121 +17,28 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  installFakeFoundry,
+  makeActor,
+  makeDataAccess,
+  type FakeActor,
+  type FakeWorld,
+} from './__fixtures__/fake-foundry.js';
 
 // ─── Fake Foundry world ───────────────────────────────────────────────────────
+//
+// The harness this file used to build inline now lives in
+// `__fixtures__/fake-foundry.ts`, shared with `import-actors.test.ts` and the
+// mechanics-builder characterization tests. Both load-bearing properties this
+// file depends on are preserved there and documented as such: the fake `getFlag`
+// THROWS, and there is no `game.scenes` unless a test explicitly asks for one.
+// `world.writes` still records every write attempt, so "a read tool writes
+// nothing" is asserted exactly as before.
 
-interface FakeActor {
-  id: string;
-  name: string;
-  type: string;
-  system: Record<string, any>;
-  img?: string;
-  flags: Record<string, any>;
-  folder?: { name: string } | null;
-  items: any[];
-  effects: any[];
-  prototypeToken?: any;
-  getFlag: (scope: string, key: string) => never;
-  update: (patch: Record<string, any>) => Promise<void>;
-}
+let world: FakeWorld;
 
-interface World {
-  actors: FakeActor[];
-  /** Any write attempt at all — a read tool must leave this empty. */
-  writes: string[];
-}
-
-let world: World;
-
-function makeActor(
-  name: string,
-  opts: {
-    img?: string;
-    flags?: Record<string, any>;
-    tokenSrc?: string | null;
-    type?: string;
-    folder?: string | null;
-    items?: any[];
-  } = {}
-): FakeActor {
-  const actor: FakeActor = {
-    id: name.padEnd(16, '0').slice(0, 16),
-    name,
-    type: opts.type ?? 'PC',
-    system: { settings: { splat: 'mortal', haswillpower: true }, attributes: {} },
-    ...(opts.img !== undefined ? { img: opts.img } : {}),
-    flags: opts.flags ?? {},
-    folder: opts.folder !== undefined ? (opts.folder ? { name: opts.folder } : null) : null,
-    items: opts.items ?? [],
-    effects: [],
-    // Foundry throws for a flag scope that is not core / the system id / the
-    // world id / an ACTIVE module id. `wodchar` is none of those, so any read
-    // path that uses getFlag() breaks on exactly the actors it exists to inspect.
-    getFlag: (scope: string, key: string) => {
-      throw new Error(`Flag scope '${scope}' is not valid or not currently active (key ${key})`);
-    },
-    update: async patch => {
-      world.writes.push(`update:${actor.id}:${Object.keys(patch).join(',')}`);
-    },
-  };
-  if (opts.tokenSrc !== null) {
-    const src = opts.tokenSrc ?? `wod20-tokens/${name}.webp`;
-    // A real prototypeToken is a DataModel: its schema fields are NOT own
-    // enumerable properties, so anything reading it must go through toObject().
-    const source = {
-      name,
-      actorLink: true,
-      texture: { src, scaleX: 1, scaleY: 1 },
-      sight: { enabled: false, range: 0 },
-      ring: null,
-    };
-    actor.prototypeToken = { toObject: () => JSON.parse(JSON.stringify(source)) };
-  }
-  return actor;
-}
-
-function installWorld(actors: FakeActor[] = []) {
-  world = { actors, writes: [] };
-  const g = globalThis as any;
-  g.Hooks = { on: () => {}, once: () => {}, callAll: () => {} };
-  g.foundry = {
-    utils: {
-      getProperty: (obj: any, p: string) => p.split('.').reduce((a: any, k) => a?.[k], obj),
-    },
-  };
-  g.game = {
-    ready: true,
-    world: { id: 'test-world' },
-    system: { id: 'worldofdarkness' },
-    user: { isGM: true },
-    // NOTE: no `scenes` at all. Every art assertion below therefore proves that
-    // reading art does not require a token placed on a scene.
-    // `game.actors` is a Collection: iterable AND indexed. Note `get`/`find` must
-    // close over a plain copy, not over the augmented object itself.
-    actors: Object.assign([...world.actors], {
-      get: (id: string) => world.actors.find(a => a.id === id),
-      find: (fn: (a: FakeActor) => boolean) => world.actors.find(fn),
-    }),
-    folders: [],
-  };
-  g.Actor = {
-    create: async (doc: any) => {
-      world.writes.push(`create:${doc?.name}`);
-      return null;
-    },
-  };
-  g.Folder = {
-    create: async (doc: any) => {
-      world.writes.push(`folder:${doc?.name}`);
-      return null;
-    },
-  };
-  g.CONFIG = { queries: {} };
-}
-
-async function makeDataAccess() {
-  const mod = await import('./data-access.js');
-  return new mod.FoundryDataAccess() as any;
+function installWorld(actors: FakeActor[] = []): void {
+  world = installFakeFoundry({ actors });
 }
 
 beforeEach(() => {

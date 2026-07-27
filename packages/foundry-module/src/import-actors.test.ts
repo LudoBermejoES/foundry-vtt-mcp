@@ -15,112 +15,20 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { installFakeFoundry, makeDataAccess, type FakeWorld } from './__fixtures__/fake-foundry.js';
 
 // ─── Fake Foundry world ───────────────────────────────────────────────────────
+//
+// The harness this file used to build inline now lives in
+// `__fixtures__/fake-foundry.ts`, shared with `actor-read-path.test.ts` and the
+// mechanics-builder characterization tests. Every recorder these tests assert on
+// (`createCalls`, `updateCalls`, `folderCreateCalls`, `refuse`, `explode`) is
+// unchanged; the fixture only adds more of them.
 
-interface FakeActor {
-  id: string;
-  name: string;
-  type: string;
-  system: Record<string, any>;
-  img?: string;
-  flags: Record<string, any>;
-  folder?: { name: string } | string | null;
-  items: Array<{ id: string }>;
-  update: (patch: Record<string, any>) => Promise<void>;
-  deleteEmbeddedDocuments: (t: string, ids: string[]) => Promise<void>;
-  createEmbeddedDocuments: (t: string, docs: any[]) => Promise<void>;
-}
+let world: FakeWorld;
 
-interface World {
-  actors: FakeActor[];
-  folders: Array<{ id: string; name: string; type: string }>;
-  createCalls: Array<Record<string, any>>;
-  folderCreateCalls: string[];
-  updateCalls: string[];
-  /** Set to make Actor.create return null (Foundry refusing the document). */
-  refuse: Set<string>;
-  /** Set to make Actor.create throw (a Foundry-side exception). */
-  explode: Set<string>;
-}
-
-let world: World;
-let nextId = 0;
-
-function installWorld() {
-  nextId = 0;
-  world = {
-    actors: [],
-    folders: [],
-    createCalls: [],
-    folderCreateCalls: [],
-    updateCalls: [],
-    refuse: new Set(),
-    explode: new Set(),
-  };
-
-  const g = globalThis as any;
-  g.Hooks = { on: () => {}, once: () => {}, callAll: () => {} };
-  g.foundry = {
-    utils: {
-      getProperty: (obj: any, p: string) => p.split('.').reduce((a: any, k) => a?.[k], obj),
-    },
-  };
-  g.game = {
-    ready: true,
-    world: { id: 'test-world' },
-    system: { id: 'worldofdarkness' },
-    user: { isGM: true },
-    actors: world.actors,
-    folders: world.folders,
-  };
-  g.Actor = {
-    create: async (doc: Record<string, any>) => {
-      world.createCalls.push(structuredClone(doc));
-      if (world.explode.has(doc.name)) throw new Error(`Foundry exploded on ${doc.name}`);
-      if (world.refuse.has(doc.name)) return null;
-      const actor: FakeActor = {
-        id: `actor-${nextId++}`,
-        name: doc.name,
-        type: doc.type,
-        system: doc.system,
-        img: doc.img,
-        flags: doc.flags ?? {},
-        folder: world.folders.find(f => f.id === doc.folder)
-          ? { name: world.folders.find(f => f.id === doc.folder)!.name }
-          : null,
-        items: (doc.items ?? []).map((_: any, i: number) => ({ id: `item-${nextId}-${i}` })),
-        update: async patch => {
-          world.updateCalls.push(actor.id);
-          Object.assign(actor, patch);
-        },
-        deleteEmbeddedDocuments: async () => {
-          actor.items = [];
-        },
-        createEmbeddedDocuments: async (_t, docs) => {
-          actor.items = docs.map((_d, i) => ({ id: `newitem-${i}` }));
-        },
-      };
-      world.actors.push(actor);
-      return actor;
-    },
-  };
-  // `Folder.create` is reached through getOrCreateFolder; record any creation so
-  // a dry run can be proven not to write.
-  g.Folder = {
-    create: async (doc: any) => {
-      world.folderCreateCalls.push(doc.name);
-      const folder = { id: `folder-${nextId++}`, name: doc.name, type: doc.type };
-      world.folders.push(folder);
-      return folder;
-    },
-  };
-  g.CONFIG = { queries: {} };
-}
-
-async function makeDataAccess() {
-  const mod = await import('./data-access.js');
-  return new mod.FoundryDataAccess() as any;
+function installWorld(): void {
+  world = installFakeFoundry();
 }
 
 /** A minimal but valid exported actor document. */

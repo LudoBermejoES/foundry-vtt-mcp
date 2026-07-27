@@ -16,5 +16,11 @@
     }
   },
   "include": ["src/**/*", "types/**/*"],
-  "exclude": ["dist", "**/*.test.*", "**/*.spec.*"]
+  // `src/__fixtures__` is test-only scaffolding (the shared fake Foundry world),
+  // excluded for the same reason as `*.test.*`: this config EMITS into `dist`, and
+  // installer/build-nsis.js copies `dist` recursively into the shipped module, so
+  // anything left in here rides along into a user's Foundry install.
+  // It does typecheck cleanly under this config — to re-verify, drop the
+  // `src/__fixtures__/**` entry below and run `npm run typecheck`.
+  "exclude": ["dist", "**/*.test.*", "**/*.spec.*", "src/__fixtures__/**"]
 }
