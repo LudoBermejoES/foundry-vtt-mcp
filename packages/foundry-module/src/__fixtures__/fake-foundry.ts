@@ -119,6 +119,40 @@
  * because `updateWfrp4eActor`/`addWfrp4eItems` are 461 lines that only run
  * against a wfrp4e-shaped `system` + skill/career items, and `createActors`
  * branches on `game.system.id === 'mgt2e'`.
+ *
+ * ── Additive for the character-reading characterization tests ────────────────
+ *
+ * The character-reading cluster (`getCharacterInfo`, `searchCharacterItems`,
+ * `extractSpellcastingData` and its six helpers) contains TWO four-way
+ * `systemId` dispatches — pf2e / dnd5e / dsa5 / wfrp4e — and the fixture had
+ * actor builders for exactly one of the four. Three of the four arms were
+ * therefore unreachable. Added, all additive, nothing existing changed:
+ *
+ * 1. **`makePf2eActor` / `makeDnd5eActor` / `makeDsa5Actor`**, alongside the
+ *    wfrp4e and mgt2e builders that were already here. Each assembles the
+ *    `system` shape and the item list its arm of the dispatch reads, and
+ *    nothing more — a pf2e actor is not a dnd5e actor with a different
+ *    `game.system.id`, which is the whole reason a per-branch case is required.
+ * 2. **Item builders for the four systems' spells** (`pf2eSpell`,
+ *    `pf2eSpellcastingEntry`, `dnd5eSpell`, `dnd5eClass`, `dsa5Spell`,
+ *    `wfrp4eSpell`, `wfrp4ePrayer`). The read cluster's helpers dig through
+ *    `system.level.value` vs `system.rank`, `system.location.value` vs a bare
+ *    `system.location`, `system.range.value` vs `system.Reichweite`, and
+ *    `_source.system.preparation.prepared` vs `system.prepared` — every one of
+ *    those `??`/`||` chains is a branch, so each alternative is settable
+ *    INDEPENDENTLY rather than folded into one convenient shape.
+ * 3. **`makeEffect` plus an `effects` option on `makeActor`.** `actor.effects`
+ *    was always `[]`, so `getCharacterInfo`'s effect mapping — including its
+ *    three-way duration merge, `duration.units ?? _source.duration.type ??
+ *    'none'` — had nothing to map. The live `duration` and the `_source`
+ *    duration are settable separately because the merge is invisible unless
+ *    they disagree.
+ * 4. **A `spellcasting` option on `makeActor`.** PF2e's entry list is
+ *    `actor.spellcasting?.contents || actor.items.filter(type ===
+ *    'spellcastingEntry')`; without the first the `||` never resolves left.
+ * 5. **`makeWfrp4eActor` gained `spells` / `prayers` / `items`.** It built
+ *    skill and career items only, which is all the CRUD cluster needed; the
+ *    wfrp4e spellcasting arm groups spells by lore and prayers by god.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -140,7 +174,20 @@ export interface FakeActor {
   effects: any[];
   /** Foundry's per-user permission map. `setActorOwnership` rewrites it. */
   ownership?: Record<string, number>;
-  prototypeToken?: { toObject: () => Record<string, any> };
+  /**
+   * PF2e's own actor-level spellcasting collection. `extractSpellcastingData`
+   * prefers `actor.spellcasting.contents` and falls back to filtering
+   * `spellcastingEntry` items, so the left side of that `||` needs to exist to
+   * be reachable at all.
+   */
+  spellcasting?: { contents: any[] };
+  /**
+   * A DataModel in Foundry: its schema fields are NOT own enumerable
+   * properties, so a reader has to go through `toObject()`. `tokenOverride`
+   * installs one that does NOT — `extractTokenArt` sanitises the live object
+   * instead when `toObject` is missing, which is its other branch.
+   */
+  prototypeToken?: { toObject?: () => any } & Record<string, any>;
   /** Throws, on purpose. See load-bearing property (1). */
   getFlag: (scope: string, key: string) => never;
   update: (patch: Record<string, any>) => Promise<void>;
@@ -564,12 +611,28 @@ export function makeActor(
     flags?: Record<string, any>;
     /** `null` = no prototypeToken at all; omitted = a default token texture. */
     tokenSrc?: string | null;
+    /**
+     * `prototypeToken.ring`. Defaults to `null`, which `extractTokenArt` drops;
+     * a value is what makes it sanitise and emit one.
+     */
+    tokenRing?: Record<string, any> | null;
+    /**
+     * Replaces the constructed `prototypeToken` wholesale — for a token that is
+     * a plain object with no `toObject`, or whose `toObject` returns a
+     * non-object, or that carries no `texture` at all. Each is a real branch of
+     * `extractTokenArt` and none is reachable through the default shape.
+     */
+    tokenOverride?: Record<string, any>;
     type?: string;
     folder?: string | null;
     items?: any[];
+    /** ActiveEffects. Built with `makeEffect`; `[]` unless a test asks. */
+    effects?: any[];
     system?: Record<string, any>;
     /** Foundry's ownership map, e.g. `{ 'user-2': 3, default: 0 }`. */
     ownership?: Record<string, number>;
+    /** PF2e's `actor.spellcasting.contents`. See the note on `FakeActor`. */
+    spellcasting?: { contents: any[] };
   } = {}
 ): FakeActor {
   const actor: FakeActor = {
@@ -581,8 +644,9 @@ export function makeActor(
     flags: opts.flags ?? {},
     folder: opts.folder !== undefined ? (opts.folder ? { name: opts.folder } : null) : null,
     items: (opts.items ?? []) as FakeItemCollection,
-    effects: [],
+    effects: opts.effects ?? [],
     ...(opts.ownership !== undefined ? { ownership: opts.ownership } : {}),
+    ...(opts.spellcasting !== undefined ? { spellcasting: opts.spellcasting } : {}),
     getFlag: throwingGetFlag,
     update: async () => undefined,
     createEmbeddedDocuments: async () => [],
@@ -590,7 +654,9 @@ export function makeActor(
     deleteEmbeddedDocuments: async () => undefined,
     testUserPermission: () => false,
   };
-  if (opts.tokenSrc !== null) {
+  if (opts.tokenOverride !== undefined) {
+    actor.prototypeToken = opts.tokenOverride;
+  } else if (opts.tokenSrc !== null) {
     const src = opts.tokenSrc ?? `wod20-tokens/${name}.webp`;
     // A real prototypeToken is a DataModel: its schema fields are NOT own
     // enumerable properties, so anything reading it must go through toObject().
@@ -599,7 +665,7 @@ export function makeActor(
       actorLink: true,
       texture: { src, scaleX: 1, scaleY: 1 },
       sight: { enabled: false, range: 0 },
-      ring: null,
+      ring: opts.tokenRing ?? null,
     };
     actor.prototypeToken = {
       toObject: () => JSON.parse(JSON.stringify(source)) as Record<string, any>,
@@ -661,6 +727,13 @@ export function makeWfrp4eActor(
     skills?: Record<string, number>;
     /** Career items: name → whether it is currently the active career. */
     careers?: Record<string, boolean>;
+    /** Arcane spell items, built with `wfrp4eSpell` — grouped by lore on read. */
+    spells?: Record<string, any>[];
+    /** Prayer items, built with `wfrp4ePrayer` — grouped by god on read. */
+    prayers?: Record<string, any>[];
+    /** Any further items, verbatim. */
+    items?: Record<string, any>[];
+    effects?: any[];
   } = {}
 ): FakeActor {
   const items: any[] = [];
@@ -685,9 +758,11 @@ export function makeWfrp4eActor(
       system: { current: { value: current } },
     });
   }
+  items.push(...(opts.spells ?? []), ...(opts.prayers ?? []), ...(opts.items ?? []));
   return makeActor(name, {
     type: 'character',
     items,
+    ...(opts.effects !== undefined ? { effects: opts.effects } : {}),
     system: {
       characteristics: opts.characteristics ?? {
         ws: { initial: 30, advances: 0, modifier: 0, value: 30, bonus: 3 },
@@ -722,6 +797,428 @@ export function makeMgt2eActor(
       hits: { value: 24, max: 24 },
     },
   });
+}
+
+// ─── ActiveEffects ────────────────────────────────────────────────────────────
+
+/**
+ * An ActiveEffect. `getCharacterInfo` merges the duration from THREE sources —
+ * `duration.units ?? _source.duration.type ?? 'none'` and
+ * `duration.seconds ?? _source.duration.duration` — so the LIVE duration and
+ * the `_source` duration are set independently: the merge is invisible unless
+ * they disagree, and a nullish `units` is what makes the fallback fire.
+ *
+ * Pass `''` as the name to reach the `label` fallback, and `''` with no label to
+ * reach `'Unknown Effect'`.
+ */
+export function makeEffect(
+  name: string,
+  opts: {
+    id?: string;
+    label?: string;
+    icon?: string;
+    disabled?: boolean;
+    /** `searchCharacterItems` echoes this; `getCharacterInfo` ignores it. */
+    description?: string;
+    /**
+     * The live `duration`. OMITTED entirely means no duration key at all, which
+     * is a different branch from a duration whose fields are absent.
+     */
+    duration?: {
+      units?: string | null;
+      seconds?: number | null;
+      remaining?: number | null;
+    } | null;
+    /** `_source.duration` — the raw stored duration the merge falls back to. */
+    sourceDuration?: { type?: string; duration?: number };
+  } = {}
+): Record<string, any> {
+  return {
+    id: opts.id ?? `eff-${slug(name || 'anon')}`,
+    name,
+    ...(opts.label !== undefined ? { label: opts.label } : {}),
+    ...(opts.icon !== undefined ? { icon: opts.icon } : {}),
+    disabled: opts.disabled ?? false,
+    ...(opts.description !== undefined ? { description: opts.description } : {}),
+    ...(opts.duration !== undefined ? { duration: opts.duration } : {}),
+    ...(opts.sourceDuration !== undefined ? { _source: { duration: opts.sourceDuration } } : {}),
+  };
+}
+
+// ─── System-shaped spells and spellcasting ────────────────────────────────────
+
+function slug(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'x'
+  );
+}
+
+export interface Pf2eSpellSpec {
+  name: string;
+  id?: string;
+  /** `system.level.value` — PF2e's rank, and the FIRST link of the `??` chain. */
+  rank?: number;
+  /** `system.rank` — the second link, read only when `level.value` is absent. */
+  rankFlat?: number;
+  /** `system.location.value` — the spellcasting entry this spell belongs to. */
+  location?: string;
+  /** `system.location` as a BARE string — the other side of the entry filter's `||`. */
+  locationFlat?: string;
+  /** `system.location.prepared`. */
+  prepared?: boolean;
+  /** `system.location.expended`. */
+  expended?: boolean;
+  /** `system.traits.value`. `['focus']` is what makes a spell a focus spell. */
+  traits?: string[];
+  /** `system.category.value` — the OTHER way to be a focus spell. */
+  category?: string;
+  /** `system.time.value` — the raw value `formatPF2eActionCost` formats. */
+  time?: string | number;
+  /** `system.range.value`. */
+  range?: string | number;
+  /** `system.target.value` — PF2e's target is one descriptive string. */
+  target?: string;
+  /** `system.area`. `{ type }` alone renders as the bare type, no size. */
+  area?: { type?: string; value?: number };
+  /** Merged over the assembled `system`, for shapes no shorthand covers. */
+  system?: Record<string, any>;
+}
+
+/** A PF2e spell item. */
+export function pf2eSpell(spec: Pf2eSpellSpec): Record<string, any> {
+  const system: Record<string, any> = {};
+  if (spec.rank !== undefined) system.level = { value: spec.rank };
+  if (spec.rankFlat !== undefined) system.rank = spec.rankFlat;
+  if (spec.traits !== undefined) system.traits = { value: spec.traits };
+  if (spec.category !== undefined) system.category = { value: spec.category };
+  if (spec.time !== undefined) system.time = { value: spec.time };
+  if (spec.range !== undefined) system.range = { value: spec.range };
+  if (spec.target !== undefined) system.target = { value: spec.target };
+  if (spec.area !== undefined) system.area = spec.area;
+  const location: Record<string, any> = {};
+  if (spec.location !== undefined) location.value = spec.location;
+  if (spec.prepared !== undefined) location.prepared = spec.prepared;
+  if (spec.expended !== undefined) location.expended = spec.expended;
+  if (Object.keys(location).length > 0) system.location = location;
+  if (spec.locationFlat !== undefined) system.location = spec.locationFlat;
+  Object.assign(system, spec.system ?? {});
+  return { id: spec.id ?? `spell-${slug(spec.name)}`, name: spec.name, type: 'spell', system };
+}
+
+/**
+ * A PF2e `spellcastingEntry` item. Note that `extractSpellcastingData` reads the
+ * entry's data as `entry.system || entry` but its spell collection as
+ * `entry.spells` — an own property of the item, NOT part of `system`.
+ */
+export function pf2eSpellcastingEntry(
+  spec: {
+    id?: string;
+    name?: string;
+    /** `entry.spells`, keyed `spell0`…`spell10`; values `{ value: [refs] }` or a bare array. */
+    spells?: Record<string, any>;
+    /** Written to `entry.system` verbatim — for asserting which key of a `||` wins. */
+    system?: Record<string, any>;
+    /** `system.tradition.value`. */
+    tradition?: string;
+    /** `system.prepared.value` — the entry TYPE (prepared/spontaneous/innate/focus). */
+    prepared?: string;
+    /** `system.ability.value`. */
+    ability?: string;
+    /** `system.spelldc` — `{ dc, value }`, whose `value` is the spell ATTACK. */
+    spelldc?: { dc?: number; value?: number };
+    /** `system.slots` — `{ slot1: { value, max } }`, per PF2e rank. */
+    slots?: Record<string, { value?: number; max?: number }>;
+  } = {}
+): Record<string, any> {
+  const system: Record<string, any> = {};
+  if (spec.tradition !== undefined) system.tradition = { value: spec.tradition };
+  if (spec.prepared !== undefined) system.prepared = { value: spec.prepared };
+  if (spec.ability !== undefined) system.ability = { value: spec.ability };
+  if (spec.spelldc !== undefined) system.spelldc = spec.spelldc;
+  if (spec.slots !== undefined) system.slots = spec.slots;
+  Object.assign(system, spec.system ?? {});
+  return {
+    id: spec.id ?? `entry-${slug(spec.name ?? 'spellcasting')}`,
+    name: spec.name ?? 'Spellcasting',
+    type: 'spellcastingEntry',
+    system,
+    ...(spec.spells !== undefined ? { spells: spec.spells } : {}),
+  };
+}
+
+/**
+ * A PF2e-shaped actor. `system.actions` is what `getCharacterInfo`'s strike
+ * block reads — and note that block is NOT gated on `game.system.id`, so it
+ * fires for any actor carrying the field.
+ */
+export function makePf2eActor(
+  name: string,
+  opts: {
+    /** `system.actions` — PF2e strikes. */
+    actions?: Record<string, any>[];
+    /** `spellcastingEntry` items, built with `pf2eSpellcastingEntry`. */
+    entries?: Record<string, any>[];
+    /** Spell items, built with `pf2eSpell`. */
+    spells?: Record<string, any>[];
+    /** Any further items, verbatim (feats, weapons, rule-element carriers). */
+    items?: Record<string, any>[];
+    effects?: any[];
+    /** Installs `actor.spellcasting.contents` — the entry source PF2e prefers. */
+    spellcastingContents?: Record<string, any>[];
+    /** Merged over the assembled `system`. */
+    system?: Record<string, any>;
+  } = {}
+): FakeActor {
+  const system: Record<string, any> = {
+    details: { level: { value: 1 } },
+    ...(opts.actions !== undefined ? { actions: opts.actions } : {}),
+    ...(opts.system ?? {}),
+  };
+  return makeActor(name, {
+    type: 'character',
+    items: [...(opts.entries ?? []), ...(opts.spells ?? []), ...(opts.items ?? [])],
+    ...(opts.effects !== undefined ? { effects: opts.effects } : {}),
+    ...(opts.spellcastingContents !== undefined
+      ? { spellcasting: { contents: opts.spellcastingContents } }
+      : {}),
+    system,
+  });
+}
+
+export interface Dnd5eSpellSpec {
+  name: string;
+  id?: string;
+  /** `system.level` — a FLAT number in 5e, unlike PF2e's `level.value`. */
+  level?: number;
+  /** `system.prepared` — read first by `searchCharacterItems`. */
+  prepared?: boolean;
+  /** `system.preparation.prepared` — what the general-entry fallback reads. */
+  preparation?: boolean;
+  /** `_source.system.preparation.prepared` — what the by-class path falls back to. */
+  rawPreparation?: boolean;
+  /** `_source.system.sourceClass` — the last link of the source-class chain. */
+  sourceClass?: string;
+  /** `system.sourceItem`: a bare id string, or `{ identifier }` / `{ id }`. */
+  sourceItem?: string | { identifier?: string; id?: string };
+  /** `system.activation.type` — 5e's action cost, used verbatim. */
+  activation?: string;
+  /** `system.range` — `units: 'self' | 'touch' | 'spec'` short-circuit the value. */
+  range?: { value?: number | string; units?: string; special?: string };
+  /** `system.target` — `type`, `value`, and a `template` for area spells. */
+  target?: {
+    type?: string;
+    value?: number;
+    template?: { type?: string; size?: number; units?: string };
+  };
+  system?: Record<string, any>;
+}
+
+/** A D&D 5e spell item. */
+export function dnd5eSpell(spec: Dnd5eSpellSpec): Record<string, any> {
+  const system: Record<string, any> = {};
+  if (spec.level !== undefined) system.level = spec.level;
+  if (spec.prepared !== undefined) system.prepared = spec.prepared;
+  if (spec.preparation !== undefined) system.preparation = { prepared: spec.preparation };
+  if (spec.sourceItem !== undefined) system.sourceItem = spec.sourceItem;
+  if (spec.activation !== undefined) system.activation = { type: spec.activation };
+  if (spec.range !== undefined) system.range = spec.range;
+  if (spec.target !== undefined) system.target = spec.target;
+  Object.assign(system, spec.system ?? {});
+  const raw: Record<string, any> = {};
+  if (spec.sourceClass !== undefined) raw.sourceClass = spec.sourceClass;
+  if (spec.rawPreparation !== undefined) raw.preparation = { prepared: spec.rawPreparation };
+  return {
+    id: spec.id ?? `spell-${slug(spec.name)}`,
+    name: spec.name,
+    type: 'spell',
+    system,
+    // `_source` is absent unless asked for: the reader falls back to `system`
+    // when there is none, which is a different branch.
+    ...(Object.keys(raw).length > 0 ? { _source: { system: raw } } : {}),
+  };
+}
+
+/**
+ * A D&D 5e `class` item. `progression: 'none'` and a class with no
+ * `spellcasting` block at all are both real non-caster branches.
+ */
+export function dnd5eClass(
+  name: string,
+  opts: {
+    id?: string;
+    /** `system.spellcasting.progression`. Pass `null` for no spellcasting block. */
+    progression?: string | null;
+    /** `system.spellcasting.type` — the entry type echoed on the result. */
+    type?: string;
+    /** `system.spellcasting.ability`. */
+    ability?: string;
+  } = {}
+): Record<string, any> {
+  const progression = opts.progression === undefined ? 'full' : opts.progression;
+  return {
+    id: opts.id ?? `class-${slug(name)}`,
+    name,
+    type: 'class',
+    system:
+      progression === null
+        ? {}
+        : {
+            spellcasting: {
+              progression,
+              ...(opts.type !== undefined ? { type: opts.type } : {}),
+              ...(opts.ability !== undefined ? { ability: opts.ability } : {}),
+            },
+          },
+  };
+}
+
+/** A D&D 5e-shaped actor. `system.spells` is the slot store both slot readers use. */
+export function makeDnd5eActor(
+  name: string,
+  opts: {
+    /** `system.spells` — `{ spell1: { value, max }, …, pact: { value, max } }`. */
+    spellSlots?: Record<string, { value?: number; max?: number }>;
+    classes?: Record<string, any>[];
+    spells?: Record<string, any>[];
+    items?: Record<string, any>[];
+    effects?: any[];
+    system?: Record<string, any>;
+  } = {}
+): FakeActor {
+  return makeActor(name, {
+    type: 'character',
+    items: [...(opts.classes ?? []), ...(opts.spells ?? []), ...(opts.items ?? [])],
+    ...(opts.effects !== undefined ? { effects: opts.effects } : {}),
+    system: {
+      abilities: { int: { value: 16 } },
+      ...(opts.spellSlots !== undefined ? { spells: opts.spellSlots } : {}),
+      ...(opts.system ?? {}),
+    },
+  });
+}
+
+export interface Dsa5SpellSpec {
+  name: string;
+  id?: string;
+  /** The ITEM type, which is what sorts a DSA5 spell into one of the three groups. */
+  type?: 'spell' | 'liturgy' | 'ceremony' | 'ritual';
+  /** `system.level.value`. */
+  level?: number;
+  /** `system.level` as a flat number — the second link of the `??` chain. */
+  levelFlat?: number;
+  /** `system.effect.attributes` — DSA5's stand-in for traits. */
+  attributes?: string[];
+  /** `system.castingTime.value`. */
+  castingTime?: string;
+  /** `system.range.value`. */
+  range?: string;
+  /** `system.Reichweite` — the German-key fallback for range. */
+  reichweite?: string;
+  /** `system.targetCategory.value`. */
+  targetCategory?: string;
+  /** `system.Zielkategorie` — the German-key fallback for target. */
+  zielkategorie?: string;
+  /** `system.effectRadius.value`. */
+  effectRadius?: string;
+  /** `system.Wirkungsbereich` — the German-key fallback for area. */
+  wirkungsbereich?: string;
+  system?: Record<string, any>;
+}
+
+/** A DSA5 spell / liturgy / ceremony / ritual item. */
+export function dsa5Spell(spec: Dsa5SpellSpec): Record<string, any> {
+  const system: Record<string, any> = {};
+  if (spec.level !== undefined) system.level = { value: spec.level };
+  if (spec.levelFlat !== undefined) system.level = spec.levelFlat;
+  if (spec.attributes !== undefined) system.effect = { attributes: spec.attributes };
+  if (spec.castingTime !== undefined) system.castingTime = { value: spec.castingTime };
+  if (spec.range !== undefined) system.range = { value: spec.range };
+  if (spec.reichweite !== undefined) system.Reichweite = spec.reichweite;
+  if (spec.targetCategory !== undefined) system.targetCategory = { value: spec.targetCategory };
+  if (spec.zielkategorie !== undefined) system.Zielkategorie = spec.zielkategorie;
+  if (spec.effectRadius !== undefined) system.effectRadius = { value: spec.effectRadius };
+  if (spec.wirkungsbereich !== undefined) system.Wirkungsbereich = spec.wirkungsbereich;
+  Object.assign(system, spec.system ?? {});
+  return {
+    id: spec.id ?? `spell-${slug(spec.name)}`,
+    name: spec.name,
+    type: spec.type ?? 'spell',
+    system,
+  };
+}
+
+/**
+ * A DSA5-shaped actor. AsP and KaP are read as
+ * `system.status.astralenergy || system.astralenergy`, so both positions are
+ * settable: `asp`/`kap` write the `status` path, `aspFlat`/`kapFlat` the other.
+ */
+export function makeDsa5Actor(
+  name: string,
+  opts: {
+    asp?: { value?: number; max?: number };
+    kap?: { value?: number; max?: number };
+    aspFlat?: { value?: number; max?: number };
+    kapFlat?: { value?: number; max?: number };
+    spells?: Record<string, any>[];
+    items?: Record<string, any>[];
+    effects?: any[];
+    system?: Record<string, any>;
+  } = {}
+): FakeActor {
+  const status: Record<string, any> = {};
+  if (opts.asp !== undefined) status.astralenergy = opts.asp;
+  if (opts.kap !== undefined) status.karmaenergy = opts.kap;
+  return makeActor(name, {
+    type: 'character',
+    items: [...(opts.spells ?? []), ...(opts.items ?? [])],
+    ...(opts.effects !== undefined ? { effects: opts.effects } : {}),
+    system: {
+      status,
+      ...(opts.aspFlat !== undefined ? { astralenergy: opts.aspFlat } : {}),
+      ...(opts.kapFlat !== undefined ? { karmaenergy: opts.kapFlat } : {}),
+      ...(opts.system ?? {}),
+    },
+  });
+}
+
+/**
+ * A WFRP4e spell item. WFRP4e has no levels and no slots: a spell carries a
+ * Casting Number and belongs to a Lore, and `lore.value` is sometimes an ARRAY,
+ * of which only the first element is read.
+ */
+export function wfrp4eSpell(
+  name: string,
+  opts: {
+    id?: string;
+    /** `system.lore.value`. Absent defaults the group to `'arcane'`. */
+    lore?: string | string[];
+    /** `system.cn.value` — the Casting Number. `null` is a real, distinct case. */
+    cn?: number | null;
+    range?: string;
+    target?: string;
+  } = {}
+): Record<string, any> {
+  const system: Record<string, any> = {};
+  if (opts.lore !== undefined) system.lore = { value: opts.lore };
+  if (opts.cn !== undefined) system.cn = { value: opts.cn };
+  if (opts.range !== undefined) system.range = { value: opts.range };
+  if (opts.target !== undefined) system.target = { value: opts.target };
+  return { id: opts.id ?? `spell-${slug(name)}`, name, type: 'spell', system };
+}
+
+/** A WFRP4e prayer item — divine magic, grouped by god rather than by lore. */
+export function wfrp4ePrayer(
+  name: string,
+  opts: { id?: string; god?: string; range?: string; target?: string } = {}
+): Record<string, any> {
+  const system: Record<string, any> = {};
+  if (opts.god !== undefined) system.god = { value: opts.god };
+  if (opts.range !== undefined) system.range = { value: opts.range };
+  if (opts.target !== undefined) system.target = { value: opts.target };
+  return { id: opts.id ?? `prayer-${slug(name)}`, name, type: 'prayer', system };
 }
 
 // ─── Compendium packs ─────────────────────────────────────────────────────────
