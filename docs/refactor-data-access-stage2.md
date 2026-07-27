@@ -1,11 +1,23 @@
 # `data-access.ts` stage 2 — a verified plan for the remaining ~7,000 lines
 
-This is a **plan only**. Nothing in `packages/foundry-module/src` was edited to
-produce it. It supersedes nothing in `docs/refactor-data-access.md` — it
-verifies and refines the "not yet extracted" section at the bottom of that
-file, using the TypeScript compiler API (not grep) for the call graph, exactly
-as the first pass did. See the methodology note at the end for how to
-reproduce every number here.
+> **Status: stages 1 and 2 have landed.** This was written as a plan and is now
+> part plan, part record. **Stage 1** (actor-mechanics builders) landed as
+> `extract-actor-mechanics-builders`; **stage 2** (compendium/creature search)
+> landed as `extract-compendium-search`. Both sections are marked, and stage 2's
+> in particular records **four claims this document made that turned out to be
+> wrong** — kept visible rather than rewritten away, because two of them are traps
+> stages 3 and 4 can still walk into. Every line count below `data-access.ts:4448`
+> predates stage 1 and is stale; `data-access.ts` is now ~4,270 lines, not ~7,000.
+> **Re-derive from the current source before acting on anything here.** That is
+> not a caveat — following this document's cluster-A recursion description
+> literally would have produced the exact facade back-reference it warns against.
+
+This was a **plan only** when written. Nothing in `packages/foundry-module/src`
+was edited to produce it. It supersedes nothing in
+`docs/refactor-data-access.md` — it verifies and refines the "not yet extracted"
+section at the bottom of that file, using the TypeScript compiler API (not grep)
+for the call graph, exactly as the first pass did. See the methodology note at the
+end for how to reproduce every number here.
 
 **Snapshot this was built against:** working tree as of 2026-07-27, with a
 concurrent WoD-read-path change in flight (uncommitted) touching
@@ -34,13 +46,13 @@ call-graph pass over them (every `this.<x>(...)` call site, every
 `this.<field>` access, resolved via the TS AST, not text matching) produced
 this table:
 
-| Cluster                                          | Methods | Body lines | Depends on                                                 |
-| ------------------------------------------------ | ------- | ---------- | ---------------------------------------------------------- |
-| **A — compendium/creature search**               | 20      | ~1,084     | `creature-index.ts` (`persistentIndex`), `security`        |
-| **B — character reading**                        | 9       | ~969       | `security`, `actor-resolver`                               |
-| **B′ — flag/token-art helpers (new, in flight)** | 3       | ~43        | `security`; conceptually paired with `actor-directory.ts`  |
-| **C — actor CRUD**                               | 20      | ~2,092     | `security`, `actor-resolver`, **cluster A** (2 call sites) |
-| **D — actor mechanics builders**                 | 9       | ~1,608     | `security`, `actor-resolver` only                          |
+| Cluster                                          | Methods | Body lines | Depends on                                                                                                                             |
+| ------------------------------------------------ | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **A — compendium/creature search**               | 20      | ~1,084     | `creature-index.ts` (`persistentIndex`), `security`                                                                                    |
+| **B — character reading**                        | 9       | ~969       | `security`, `actor-resolver`                                                                                                           |
+| **B′ — flag/token-art helpers (new, in flight)** | 3       | ~43        | `security`; conceptually paired with `actor-directory.ts`                                                                              |
+| **C — actor CRUD**                               | 20      | ~2,092     | `security`, `actor-resolver`, **cluster A** (2 call sites, both in `createActorFromCompendium`; `…Entry` reaches cluster A not at all) |
+| **D — actor mechanics builders**                 | 9       | ~1,608     | `security`, `actor-resolver` only                                                                                                      |
 
 This confirms the four-cluster hypothesis from `refactor-data-access.md` as
 the right axis — **with one addition (B′) that didn't exist when that doc was
@@ -91,10 +103,14 @@ makes D **the lowest-graph-risk cluster of the four**, not (as its size might
 suggest) a mid-risk one.
 
 The only confirmed cross-cluster edge among the unextracted material is
-**C → A**: `createActorFromCompendium` and `createActorFromCompendiumEntry`
-call `this.findBestCompendiumMatch()` and `this.getCompendiumDocumentFull()`
-(both cluster A). This is the doc's own prediction, and it holds — **A must
-be extracted before or together with C**, never after, if C is ever done.
+**C → A**: ~~`createActorFromCompendium` and `createActorFromCompendiumEntry`
+call~~ — **wrong, it is one caller, not two.** `createActorFromCompendium` calls
+`this.findBestCompendiumMatch()` and `this.getCompendiumDocumentFull()` (both
+cluster A), once each. `createActorFromCompendiumEntry` calls
+`addActorsToScene`, `auditLog`, `getOrCreateFolder` and `validateFoundryState` —
+nothing in cluster A. This doesn't change the ordering conclusion, which held and
+was acted on — **A must be extracted before or together with C**, never after —
+it halves the surface C has to re-point.
 
 ## Cross-boundary `this.x()` calls, every instance found
 
@@ -102,13 +118,13 @@ By cluster (facade methods that will need `this.x()` → `this.collaborator.x()`
 rewrites once their cluster moves into its own class; collaborator names below
 are proposed):
 
-**Cluster A → `security`/`creature-index` (proposed `CompendiumSearch`, or reuse `creature-index.ts`'s file):**
+**Cluster A → `security`/`creature-index` (`CompendiumSearch` — ✅ landed as `compendium-search.ts`; three of the five bullets below were wrong, corrected in Stage 2):**
 
 - `getCompendiumDocumentFull` calls `this.sanitizeData(...)` → `this.security.sanitizeData(...)`
 - `getEnhancedCreatureIndex` calls `this.validateFoundryState()` → `this.security.validateFoundryState()`, and reads `this.persistentIndex` → constructor-injected `PersistentCreatureIndex`
-- `rebuildEnhancedCreatureIndex`, `searchCompendium`, `listCreaturesByCriteria`, `fallbackBasicCreatureSearch` all read `this.moduleId` → must be passed into the new collaborator's constructor as a plain string, same as `PersistentCreatureIndex` already receives it
-- **Internal, stays `this.x()` inside the new class** (no rewrite, just moves verbatim): `searchCompendium` ↔ `fallbackBasicCreatureSearch` (mutually recursive — must move together, atomically, or you create a facade↔collaborator back-reference), `listCreaturesByCriteria` → `passesEnhancedCriteria` → the four `passesXCriteria`, `prioritizePacksForCreatures` → `getPackPriority`, `findBestCompendiumMatch` → `searchCompendium`
-- **Apparently dead code**: `passesCriteria` (distinct from `passesEnhancedCriteria`) is defined but never called anywhere in the class, in `queries.ts`, or in `mcp-server` — verified by grep across the whole repo, not just the file. Candidate for deletion in this stage, exactly like the three dead wrappers the first pass found (`tsc`'s unused-private-member check will confirm once it's a private method of a standalone class rather than a class member the facade merely doesn't call from its _own_ public surface).
+- ~~`rebuildEnhancedCreatureIndex`, `searchCompendium`, `listCreaturesByCriteria`, `fallbackBasicCreatureSearch` all read `this.moduleId` → must be passed into the new collaborator's constructor as a plain string, same as `PersistentCreatureIndex` already receives it~~ — **WRONG on both counts.** `PersistentCreatureIndex`'s constructor takes no arguments; it declares `private moduleId: string = MODULE_ID;` (`creature-index.ts:131`), identical to `FoundryDataAccess`. `compendium-search.ts` follows that precedent, which keeps all **8** `this.moduleId` reads (not 4 — `searchCompendium` alone has 4) textually unchanged in the body diff.
+- **Internal, stays `this.x()` inside the new class** (no rewrite, just moves verbatim): `listCreaturesByCriteria` → `passesEnhancedCriteria` → the four `passesXCriteria`, `findBestCompendiumMatch` → `searchCompendium`, `searchCompendium` → `shouldApplyFilters`/`matchesSearchCriteria`/`calculateRelevanceScore`, and the cycle. ~~`searchCompendium` ↔ `fallbackBasicCreatureSearch` (mutually recursive)~~ — **WRONG: there is no direct edge between those two.** The strongly-connected component is `searchCompendium` → `listCreaturesByCriteria` → `fallbackBasicCreatureSearch` → `searchCompendium`. The warning attached to it was correct and the set was not: moving only the named pair leaves the moved `searchCompendium` calling `this.listCreaturesByCriteria` and forces exactly the back-reference it warns about. ~~`prioritizePacksForCreatures` → `getPackPriority`~~ — both deleted as dead.
+- **Dead code — four methods, not one.** `passesCriteria` was found here; `passesFilters`, `prioritizePacksForCreatures` and (by cascade) `getPackPriority` are equally unreachable. 220 body lines, deleted ahead of the move in their own commit. The parenthetical was **wrong**: `tsc`'s unused-private-member check needs no standalone class — `noUnusedLocals` is on and TS 5.9 reports TS6133 for an unused private method of any class — and it was silent regardless, because three of the four carried a hand-written `// @ts-ignore - Unused method kept for compatibility`. It would have stayed silent in the new module if those comments had travelled with the bodies.
 
 **Cluster B (+ B′) → `security`/`actor-resolver` (proposed `character-reader.ts`):**
 
@@ -119,7 +135,7 @@ are proposed):
 **Cluster C → `security`/`actor-resolver`/(new) `CompendiumSearch` (proposed `actor-crud.ts`):**
 
 - Every one of `addActorItems`, `removeActorItems`, `setActorOwnership`, `updateWfrp4eActor`, `addWfrp4eItems`, `getActorOwnership`, `createNpcActor`, `addActorsToScene`, `createActorFromCompendium`, `createActorFromCompendiumEntry` calls some subset of `this.auditLog`/`this.findActorByIdentifier`/`this.validateFoundryState` → the standard `this.security.x()`/`this.actorResolver.x()` rewrite
-- `createActorFromCompendium` **also** calls `this.findBestCompendiumMatch` and `this.getCompendiumDocumentFull` → **cross-cluster**, becomes `this.compendiumSearch.findBestCompendiumMatch()` / `this.compendiumSearch.getCompendiumDocumentFull()` once cluster A exists as a collaborator
+- `createActorFromCompendium` **also** calls `this.findBestCompendiumMatch` and `this.getCompendiumDocumentFull` → **cross-cluster**, becomes `this.compendiumSearch.findBestCompendiumMatch()` / `this.compendiumSearch.getCompendiumDocumentFull()`. Cluster A now exists, so this re-pointing is available today, and doing it lets the temporary private `findBestCompendiumMatch` facade wrapper be deleted in the same diff. **`createActorFromCompendiumEntry` does NOT call into cluster A** — it calls `addActorsToScene`, `auditLog`, `getOrCreateFolder`, `validateFoundryState`. There is one C→A caller, not two.
 - `createActorFromCompendiumEntry`, `createNpcActor`, `createActors`, `importActors` call `this.getOrCreateFolder` → already a thin wrapper to `this.actorResolver.getOrCreateFolder` (no new rewrite risk — this call is already one hop from the leaf)
 - `createActorFromCompendium`/`createActorFromCompendiumEntry` call `this.addActorsToScene` (stays internal — moves with the cluster); `addActorsToScene` calls its own private sibling `this.calculateTokenPosition` (internal)
 - `createActorFromSource` calls `this.getOrCreateFolder` (as above) and reads `this.moduleId`
@@ -207,37 +223,78 @@ clean). That gives a concrete, checkable safety boundary for staging order.
 - **Collision risk with the concurrent change**: none — confirmed no diff
   hunks in this line range.
 
-### Stage 2 — Compendium/creature search (cluster A) → `compendium-search.ts`
+### Stage 2 — Compendium/creature search (cluster A) → `compendium-search.ts` — ✅ **LANDED**
 
-- **Moves**: `rebuildEnhancedCreatureIndex`, `searchCompendium`,
-  `shouldApplyFilters`, `passesFilters`, `calculateRelevanceScore`,
-  `listCreaturesByCriteria`, `passesEnhancedCriteria`, `passesMGT2eCriteria`,
-  `passesCosmereRpgCriteria`, `passesDnD5eCriteria`, `passesPF2eCriteria`,
-  `fallbackBasicCreatureSearch`, `prioritizePacksForCreatures`,
-  `getPackPriority`, `matchesSearchCriteria`, `getCompendiumDocumentFull`,
-  `findBestCompendiumMatch`, `getAvailablePacks`, `getEnhancedCreatureIndex`
-  (19 methods if `passesCriteria` is deleted as dead code first, 20 if kept)
-- **Private helpers pulled with it**: all the `passes*`/`shouldApplyFilters`/
-  `calculateRelevanceScore`/`getPackPriority` family — they're leaves within
-  this cluster already
-- **New file depends on**: `creature-index.ts` (constructor-injected
-  `PersistentCreatureIndex`, same instance the facade already holds as
-  `this.persistentIndex` — do not construct a second one), `security.ts`,
-  plus the plain `moduleId` string
-- **What could break**: `searchCompendium` and `fallbackBasicCreatureSearch`
-  call each other — **move them in the same commit/diff**, never split
-  across two files, or you're forced into a facade back-reference (breaks
-  the DAG the first pass established). `createActorFromCompendium`
-  (cluster C, still on the facade at this point) calls
-  `this.findBestCompendiumMatch()`/`this.getCompendiumDocumentFull()` — these
-  **must stay as thin facade wrapper methods** delegating to
-  `this.compendiumSearch.findBestCompendiumMatch()` etc. (mechanism 1 from
-  the first pass's playbook), since cluster C hasn't moved yet. Also: decide
-  and act on `passesCriteria` (dead) before or during this stage — leaving
-  dead code to migrate for its own sake adds risk-for-nothing.
-- **Collision risk with the concurrent change**: none — confirmed no diff
-  hunks in this line range (the concurrent hunk touching line ~2425 starts
-  strictly _after_ `matchesSearchCriteria`'s closing brace).
+Landed as `extract-compendium-search`. **Four things this section stated turned
+out to be wrong**, each corrected below from an AST re-derivation against the tree
+the pass actually ran on. They are left visible rather than rewritten away,
+because two of the four are traps that later stages can still walk into.
+
+- **Moved**: `rebuildEnhancedCreatureIndex`, `searchCompendium`,
+  `shouldApplyFilters`, `calculateRelevanceScore`, `listCreaturesByCriteria`,
+  `passesEnhancedCriteria`, `passesMGT2eCriteria`, `passesCosmereRpgCriteria`,
+  `passesDnD5eCriteria`, `passesPF2eCriteria`, `fallbackBasicCreatureSearch`,
+  `matchesSearchCriteria`, `getAvailablePacks`, `getCompendiumDocumentFull`,
+  `findBestCompendiumMatch`, `getEnhancedCreatureIndex` — **16 members, 864 body
+  lines**, plus nine type declarations. `data-access.ts` 5,481 → 4,271;
+  `compendium-search.ts` 1,107.
+- **Correction 1 — four methods were dead, not one.** This section said "decide
+  and act on `passesCriteria` (dead)". Also dead: `passesFilters` (94 lines),
+  `prioritizePacksForCreatures` (33) and, by cascade, `getPackPriority` (13) —
+  220 body lines in total, deleted in their own commit ahead of the move. **The
+  claim elsewhere in this document that "`tsc`'s unused-private-member check will
+  confirm once it's a private method of a standalone class" is wrong twice over**:
+  the check needs no standalone class (`noUnusedLocals` is on and TS 5.9 reports
+  TS6133 for an unused private method of any class), and it was silent anyway
+  because three of the four carried a hand-written `// @ts-ignore - Unused method
+kept for compatibility`. Migrated verbatim, the new module would have been
+  silent too. Check the reach sites; never take a clean type-check as evidence
+  where a suppression is in scope.
+- **Correction 2 — the recursion is a three-cycle, and the pair this section named
+  has no direct edge.** There is **no** `searchCompendium` →
+  `fallbackBasicCreatureSearch` call. The strongly-connected component is
+  `searchCompendium` → `listCreaturesByCriteria` → `fallbackBasicCreatureSearch`
+  → `searchCompendium` (call sites `:1427`, `:1820`/`:1970`, `:2236` in the
+  pre-move file), and its third member is itself reached from `queries.ts`.
+  Following this section literally — move the pair, leave the rest — would have
+  left the moved `searchCompendium` calling `this.listCreaturesByCriteria` and
+  forced the facade back-reference this section warns against. The hazard was
+  real; the set named would have caused it. **Later stages must compute the SCC,
+  not copy it**: stage 3's own candidate
+  (`createActorFromCompendium`/`…Entry` → `addActorsToScene` →
+  `calculateTokenPosition`) looks like a tree on current evidence, which is
+  exactly the kind of claim this one got wrong.
+- **Correction 3 — `createActorFromCompendiumEntry` does not call into this
+  cluster.** `…Entry` calls `addActorsToScene`, `auditLog`, `getOrCreateFolder`
+  and `validateFoundryState`. There is exactly **one** C→A caller,
+  `createActorFromCompendium`, with one call each to `findBestCompendiumMatch` and
+  `getCompendiumDocumentFull` — so stage 3 has half the surface here that this
+  document implies.
+- **Correction 4 — `moduleId` was NOT passed as a constructor string.** This
+  document recommended "a plain string, same as `PersistentCreatureIndex` already
+  receives it". `PersistentCreatureIndex`'s constructor takes **no arguments**; it
+  declares `private moduleId: string = MODULE_ID;` (`creature-index.ts:131`),
+  character-for-character what `FoundryDataAccess` does. The new module follows
+  that precedent, which keeps all 8 `this.moduleId` reads textually unchanged in
+  the body diff. Following the recommendation would have added a constructor
+  parameter no sibling has and 8 needless diff lines.
+- **What this section got right, and it mattered**: `persistentIndex` **is**
+  constructor-injected and no second `PersistentCreatureIndex` was constructed.
+  That is the one wiring mistake here that neither `tsc` nor a body diff nor a
+  surface diff can see. The test that catches it is
+  `compendium-search.test.ts`'s "constructing FoundryDataAccess creates EXACTLY
+  ONE PersistentCreatureIndex", which asserts the exact list of hooks that
+  constructor registers. Note that a rebuild-then-read round trip does **not**
+  catch it — `PersistentCreatureIndex` keeps no in-memory index, so two instances
+  share state through the file and the round trip passes either way.
+- **Facade members left behind**: six thin delegations for the externally-reached
+  members, plus a **temporary** `private` wrapper for `findBestCompendiumMatch`,
+  deletable when stage 3 re-points its one caller.
+  `getCompendiumDocumentFull`'s delegation is **permanent** — `queries.ts`
+  reaches it. Those two look identical in a diff and have different lifetimes.
+- **`getSystemSchema` is not in this cluster** (109 lines, no graph edges, pure
+  static data) and sits physically inside the region the last four cluster members
+  occupy. It stayed.
 
 ### Stage 3 — Actor CRUD, safe sub-clusters only → `actor-crud.ts`
 
@@ -386,7 +443,7 @@ Lowest to highest:
 1. **Stage 3a** (`updateActors`/`updateActorItems`/`deleteActorItems`/`deleteActors`) — no `this.x()` calls, no tests, but nothing to get wrong either.
 2. **Stage 1** (actor-mechanics builders, cluster D) — mechanical, repetitive, zero cross-cluster edges, no tests; risk is transcription error in long method bodies, not architecture.
 3. **Stage 3b** (`setActorOwnership`/`updateWfrp4eActor`/`addWfrp4eItems`/`getActorOwnership`) — same shape as stage 1.
-4. **Stage 2** (compendium search, cluster A) — internally more complex (mutual recursion, 5-way system dispatch), but self-contained; the risk is the two facade wrapper methods it must leave behind for cluster C to keep calling.
+4. **Stage 2** (compendium search, cluster A) — ✅ landed. Internally more complex (a three-member recursive cycle, 5-way system dispatch), but self-contained. The predicted risk — "the two facade wrapper methods it must leave behind for cluster C" — was mis-stated: only **one** wrapper is a cluster-C bridge (`findBestCompendiumMatch`, private, temporary), while `getCompendiumDocumentFull`'s delegation is permanent because `queries.ts` reaches it independently. The realised risk was elsewhere: five re-pointings against 864 moved body lines left `tsc` with almost nothing to catch.
 5. **Stage 3c** (`createNpcActor`/`createActors`) — pulls in the `createNpcActor` soft-validation comment; low-medium.
 6. **Stage 3d** (compendium-backed actor creation) — depends on stage 2 existing; medium, because a wiring mistake in the new cross-collaborator call would surface as "actor creation from compendium silently fails to find a match," which has no test coverage to catch it.
 7. **Stage 4** (character reading) — code-risk is actually moderate-low (best test coverage in the file besides `importActors`), but **currently has the highest _process_ risk** because it's mid-edit by someone else. Not a code problem, a sequencing problem.
@@ -421,6 +478,16 @@ schedule it as part of this decomposition.** Reasoning:
   before calling it done.
 
 ## Test-coverage reality
+
+> **Stale — recount before relying on it.** As of `extract-compendium-search` the
+> package has **4 test files, 167 cases** (`import-actors.test.ts` 28,
+> `actor-read-path.test.ts` 17, `actor-mechanics.test.ts` 41,
+> `compendium-search.test.ts` 81); workspace-wide `npm run test --workspaces` is
+> **449**. Recommendations 1 and 2 below are done. Clusters A and D are no longer
+> unguarded; **clusters B and C still are**, except `importActors`. The paragraph
+> below is left as written because its _argument_ — that `tsc` plus manual diffing
+> is the only net over long hand-built bodies — is what motivated both test changes
+> and still applies to stages 3 and 4.
 
 **28** was the number quoted before this session's concurrent work; as of
 right now the package has **2 test files, ~43-45 test cases** (`vitest run`
@@ -467,18 +534,49 @@ reports 45), because the in-flight WoD-read-path change just added
    started — which is now the spec's requirement, not just good practice. The
    remaining recommendations below (2 and 3) are unchanged and still pending.
 
-2. **A handful of `searchCompendium`/`listCreaturesByCriteria` tests** before
-   stage 2 — at minimum one per system-specific `passesXCriteria` branch (5
-   systems) plus one exercising the `searchCompendium ↔
-fallbackBasicCreatureSearch` mutual-recursion path, since that's the one
-   place in cluster A where a move-time slip (splitting the pair across
-   files, or losing the recursion) would be entirely invisible to `tsc`.
+2. ✅ **DONE — A handful of `searchCompendium`/`listCreaturesByCriteria`
+   tests** before stage 2 — at minimum one per system-specific
+   `passesXCriteria` branch (5 systems) plus one exercising the recursion
+   path, since that's the one place in cluster A where a move-time slip
+   (splitting the cycle across files, or losing the recursion) would be
+   entirely invisible to `tsc`.
+
+   Landed as `c1f12d5`: `src/compendium-search.test.ts`, **81 cases**, on an
+   extended `src/__fixtures__/fake-foundry.ts` that gained a fake `game.packs`
+   (`metadata`/`index`/`getDocuments`/`getDocument`) — which no existing test
+   needed and so did not exist. They pin the returned result set in full
+   (contents, ordering, ranking, truncation at the limit) plus the filter
+   decision that determines membership, with one case per system branch, and
+   they were green against the **pre-move** source. Verified to bite: 35
+   deliberate mutations of the pre-move `data-access.ts` — flipped comparisons,
+   defence/size/creatureType key swaps across the near-identical branches,
+   discriminator reordering, each of the four `sanitizeData` sites
+   individually, both limits, every CR-band boundary, a dropped
+   `validateFoundryState()`, `every`→`some`, a severed cycle, and a second
+   `PersistentCreatureIndex` — all 35 caught.
+
+   Two things it taught that generalise. **The recursion test has to drive the
+   real cycle**, not a stub: "drives the whole three-cycle in one call" is what
+   fails (6 cases) when the cycle is severed. And **~25 of
+   `calculateRelevanceScore`'s 59 lines are unobservable through the facade** —
+   it receives the already-built result envelope, which carries no `system`, so
+   `entryCR` is always `0` and `entryType` always `''`, and the creatureType
+   (+20) and challengeRating (+15/+10) bonuses can never fire. The tests
+   therefore pin the _consequence_ (a CR range and a creatureType filter cannot
+   reorder results) rather than asserting something vacuous. For those lines the
+   body diff is the only guard, which is a reason not to "tidy" an apparently
+   dead scoring branch while moving it.
+
 3. **A `createActorFromCompendium` test asserting the compendium-search
    cross-call** before stage 3d specifically — this is the one place a
    collaborator-wiring mistake (wrong constructor order, or forgetting the
    `this.findBestCompendiumMatch` → `this.compendiumSearch.findBestCompendiumMatch`
    rewrite) would silently degrade "create actor from compendium" into
-   always failing to find a match, with nothing to catch it.
+   always failing to find a match, with nothing to catch it. **Still pending**,
+   and still worth it after stage 2: stage 2 left that call going through a
+   temporary private facade wrapper, so the rewrite has simply moved from
+   "forget it and break the build" to "forget it and leave a wrapper that
+   should have been deleted".
 4. Do **not** invest in new tests for `importActors` beyond what's already
    there — it's already the best-covered method in the file, and (per the
    verdict above) the plan is to leave it untouched anyway.
