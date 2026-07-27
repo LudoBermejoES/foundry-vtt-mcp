@@ -41,6 +41,8 @@
 // Nothing here was deduplicated or reshaped: `searchCharacterItems`'s `let description`
 // reassignment, `extractSpellcastingData`'s repeated `actorAny.items.filter` scans and
 // `getCharacterInfo`'s duplicated `actor.items` traversals all moved verbatim.
+import { FoundrySecurity } from './security.js';
+import { ActorResolver } from './actor-resolver.js';
 
 // Local type definitions to avoid shared package import issues
 export interface CharacterInfo {
@@ -117,7 +119,292 @@ interface CharacterEffect {
 }
 
 export class CharacterReader {
-  constructor() {}
+  constructor(
+    private security: FoundrySecurity,
+    private actorResolver: ActorResolver
+  ) {}
+
+  /**
+   * Search within a character's items, spells, actions, and effects
+   * More token-efficient than getCharacterInfo when you need specific items
+   */
+  async searchCharacterItems(params: {
+    characterIdentifier: string;
+    query?: string | undefined;
+    type?: string | undefined;
+    category?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<{
+    characterId: string;
+    characterName: string;
+    query?: string;
+    type?: string;
+    category?: string;
+    matches: Array<{
+      id: string;
+      name: string;
+      type: string;
+      description?: string;
+      // For spells
+      level?: number;
+      prepared?: boolean;
+      expended?: boolean;
+      range?: string;
+      target?: string;
+      area?: string;
+      actionCost?: string;
+      traits?: string[];
+      // For items
+      quantity?: number;
+      equipped?: boolean;
+      invested?: boolean;
+      // For actions
+      actionType?: string;
+    }>;
+    totalMatches: number;
+  }> {
+    this.security.validateFoundryState();
+
+    const { characterIdentifier, query, type, category, limit = 20 } = params;
+
+    // Find the actor
+    const actor = this.actorResolver.findActorByIdentifier(characterIdentifier);
+    if (!actor) {
+      throw new Error(`Character not found: ${characterIdentifier}`);
+    }
+
+    const actorAny = actor;
+    const systemId = (game.system as any).id;
+    const matches: Array<any> = [];
+
+    // Normalize search query
+    const searchQuery = query?.toLowerCase().trim();
+    const searchType = type?.toLowerCase().trim();
+    const searchCategory = category?.toLowerCase().trim();
+
+    // Helper to check if text matches query (safely handles non-strings)
+    const matchesQuery = (text: unknown): boolean => {
+      if (!searchQuery) return true;
+      if (typeof text !== 'string') return false;
+      return text.toLowerCase().includes(searchQuery);
+    };
+
+    // Helper to check if item matches type filter
+    const matchesType = (itemType: string): boolean => {
+      if (!searchType) return true;
+      return itemType.toLowerCase() === searchType;
+    };
+
+    // Search items
+    for (const item of actor.items) {
+      const itemSystem = item.system;
+
+      // Check type filter
+      if (!matchesType(item.type)) continue;
+
+      // Check query filter (name or description)
+      // Ensure description is a string (could be an object in some systems)
+      let description = itemSystem?.description?.value || itemSystem?.description;
+      if (typeof description !== 'string') description = '';
+      if (!matchesQuery(item.name) && !matchesQuery(description)) continue;
+
+      // Build result based on item type
+      const result: any = {
+        id: item.id,
+        name: item.name,
+        type: item.type,
+      };
+
+      // Add description (truncated for token efficiency)
+      if (description) {
+        // Strip HTML and truncate
+        const plainText = description.replace(/<[^>]*>/g, '').trim();
+        result.description =
+          plainText.length > 300 ? `${plainText.substring(0, 300)}...` : plainText;
+      }
+
+      // Spell-specific fields
+      if (item.type === 'spell') {
+        result.level = itemSystem?.level?.value ?? itemSystem?.level ?? itemSystem?.rank ?? 0;
+        const itemRaw = item._source?.system;
+        result.prepared =
+          itemSystem?.prepared ?? itemRaw?.preparation?.prepared ?? itemSystem?.location?.prepared;
+        result.expended = itemSystem?.location?.expended;
+
+        // Get targeting info
+        if (systemId === 'pf2e') {
+          const targeting = this.extractPF2eSpellTargeting(itemSystem);
+          if (targeting.range) result.range = targeting.range;
+          if (targeting.target) result.target = targeting.target;
+          if (targeting.area) result.area = targeting.area;
+          result.actionCost = this.formatPF2eActionCost(itemSystem?.time?.value);
+          result.traits = itemSystem?.traits?.value || [];
+        } else if (systemId === 'dnd5e') {
+          const targeting = this.extractDnD5eSpellTargeting(itemSystem);
+          if (targeting.range) result.range = targeting.range;
+          if (targeting.target) result.target = targeting.target;
+          if (targeting.area) result.area = targeting.area;
+          result.actionCost = itemSystem?.activation?.type;
+        } else if (systemId === 'dsa5') {
+          const targeting = this.extractDSA5SpellTargeting(itemSystem);
+          if (targeting.range) result.range = targeting.range;
+          if (targeting.target) result.target = targeting.target;
+          if (targeting.area) result.area = targeting.area;
+          result.actionCost = itemSystem?.castingTime?.value;
+        } else if (systemId === 'wfrp4e') {
+          // WFRP4e spells use a Casting Number (CN) rather than levels/slots.
+          if (itemSystem?.range?.value) result.range = itemSystem.range.value;
+          if (itemSystem?.target?.value) result.target = itemSystem.target.value;
+          const cn = itemSystem?.cn?.value;
+          if (cn !== undefined && cn !== null) result.actionCost = `CN ${cn}`;
+        }
+
+        // Category filter for spells
+        if (searchCategory) {
+          const spellLevel = result.level || 0;
+          const isPrepared = result.prepared !== false;
+          const isCantrip = spellLevel === 0;
+          const isFocus =
+            itemSystem?.traits?.value?.includes('focus') || itemSystem?.category?.value === 'focus';
+
+          if (searchCategory === 'cantrip' && !isCantrip) continue;
+          if (searchCategory === 'prepared' && !isPrepared) continue;
+          if (searchCategory === 'focus' && !isFocus) continue;
+        }
+      }
+
+      // Equipment-specific fields
+      if (['weapon', 'armor', 'equipment', 'consumable', 'backpack', 'loot'].includes(item.type)) {
+        result.quantity = itemSystem?.quantity ?? 1;
+        result.equipped = itemSystem?.equipped ?? false;
+        result.invested = itemSystem?.equipped?.invested ?? itemSystem?.invested ?? undefined;
+
+        // Category filter for equipment
+        if (searchCategory) {
+          if (searchCategory === 'equipped' && !result.equipped) continue;
+          if (searchCategory === 'invested' && !result.invested) continue;
+        }
+      }
+
+      // WFRP4e equipment fields (British 'armour'; 'trapping' is generic gear)
+      if (
+        systemId === 'wfrp4e' &&
+        ['weapon', 'armour', 'trapping', 'ammunition', 'container'].includes(item.type)
+      ) {
+        result.quantity = itemSystem?.quantity?.value ?? 1;
+        result.equipped = itemSystem?.equipped?.value ?? item.isEquipped ?? false;
+
+        if (searchCategory === 'equipped' && !result.equipped) continue;
+      }
+
+      // WFRP4e prayer targeting (divine magic; item type 'prayer')
+      if (systemId === 'wfrp4e' && item.type === 'prayer') {
+        if (itemSystem?.range?.value) result.range = itemSystem.range.value;
+        if (itemSystem?.target?.value) result.target = itemSystem.target.value;
+      }
+
+      // Feat/feature fields
+      if (['feat', 'feature', 'class', 'ancestry', 'heritage', 'background'].includes(item.type)) {
+        if (systemId === 'pf2e') {
+          result.traits = itemSystem?.traits?.value || [];
+          result.level = itemSystem?.level?.value ?? undefined;
+          result.actionCost = this.formatPF2eActionCost(itemSystem?.actionType?.value);
+        }
+      }
+
+      // Action fields
+      if (item.type === 'action') {
+        if (systemId === 'pf2e') {
+          result.traits = itemSystem?.traits?.value || [];
+          result.actionCost = this.formatPF2eActionCost(
+            itemSystem?.actionType?.value || itemSystem?.actions?.value
+          );
+        }
+      }
+
+      matches.push(result);
+
+      // Stop if we've reached the limit
+      if (matches.length >= limit) break;
+    }
+
+    // Also search actions if type filter includes 'action' or is empty
+    if (!searchType || searchType === 'action') {
+      const actions =
+        actorAny.system?.actions || actorAny.items?.filter((i: any) => i.type === 'action') || [];
+      for (const action of actions) {
+        if (matches.length >= limit) break;
+
+        const actionName = action.name || action.label || '';
+        if (!matchesQuery(actionName)) continue;
+
+        const result: any = {
+          id: action.id || action.slug || actionName,
+          name: actionName,
+          type: 'action',
+          actionType: action.type || action.actionType || 'action',
+        };
+
+        if (systemId === 'pf2e') {
+          result.traits = action.traits || [];
+          result.actionCost = this.formatPF2eActionCost(action.actionCost?.value || action.actions);
+        }
+
+        matches.push(result);
+      }
+    }
+
+    // Search effects if type filter includes 'effect' or is empty
+    if (!searchType || searchType === 'effect') {
+      const effects = actor.effects || [];
+      for (const effect of effects) {
+        if (matches.length >= limit) break;
+
+        const effectAny = effect;
+        if (!matchesQuery(effectAny.name || effectAny.label)) continue;
+
+        matches.push({
+          id: effectAny.id,
+          name: effectAny.name || effectAny.label,
+          type: 'effect',
+          description: effectAny.description || undefined,
+        });
+      }
+    }
+
+    this.security.auditLog(
+      'searchCharacterItems',
+      {
+        characterId: actor.id,
+        query,
+        type,
+        category,
+        matchCount: matches.length,
+      },
+      'success'
+    );
+
+    const result: {
+      characterId: string;
+      characterName: string;
+      query?: string;
+      type?: string;
+      category?: string;
+      matches: any[];
+      totalMatches: number;
+    } = {
+      characterId: actor.id || '',
+      characterName: actor.name || '',
+      matches,
+      totalMatches: matches.length,
+    };
+
+    if (query) result.query = query;
+    if (type) result.type = type;
+    if (category) result.category = category;
+
+    return result;
+  }
 
   /**
    * Extract spellcasting data from an actor (supports PF2e, D&D 5e, DSA5, and WFRP4e)
@@ -484,7 +771,7 @@ export class CharacterReader {
   /**
    * Format PF2e action cost to human-readable string
    */
-  formatPF2eActionCost(actionValue: any): string | undefined {
+  private formatPF2eActionCost(actionValue: any): string | undefined {
     if (!actionValue) return undefined;
     if (typeof actionValue === 'number') {
       return actionValue === 1 ? '1 action' : `${actionValue} actions`;
@@ -553,7 +840,7 @@ export class CharacterReader {
    * Extract spell targeting info for D&D 5e
    * D&D 5e spells have: target.type ("self", "creature", "point", etc.), range.value, range.units
    */
-  extractDnD5eSpellTargeting(spellSystem: any): {
+  private extractDnD5eSpellTargeting(spellSystem: any): {
     range?: string;
     target?: string;
     area?: string;
@@ -609,7 +896,7 @@ export class CharacterReader {
    * Extract spell targeting info for PF2e
    * PF2e spells have: target (string), range.value, area.type, area.value
    */
-  extractPF2eSpellTargeting(spellSystem: any): {
+  private extractPF2eSpellTargeting(spellSystem: any): {
     range?: string;
     target?: string;
     area?: string;
@@ -650,7 +937,7 @@ export class CharacterReader {
    * Extract spell targeting info for DSA5
    * DSA5 spells have: targetCategory, range, etc.
    */
-  extractDSA5SpellTargeting(spellSystem: any): {
+  private extractDSA5SpellTargeting(spellSystem: any): {
     range?: string;
     target?: string;
     area?: string;

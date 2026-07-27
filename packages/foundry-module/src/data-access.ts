@@ -117,7 +117,7 @@ export class FoundryDataAccess {
     this.permissions,
     this.transactions
   );
-  private characterReader: CharacterReader = new CharacterReader();
+  private characterReader: CharacterReader = new CharacterReader(this.security, this.actorResolver);
 
   constructor() {}
 
@@ -357,247 +357,7 @@ export class FoundryDataAccess {
     }>;
     totalMatches: number;
   }> {
-    this.validateFoundryState();
-
-    const { characterIdentifier, query, type, category, limit = 20 } = params;
-
-    // Find the actor
-    const actor = this.findActorByIdentifier(characterIdentifier);
-    if (!actor) {
-      throw new Error(`Character not found: ${characterIdentifier}`);
-    }
-
-    const actorAny = actor;
-    const systemId = (game.system as any).id;
-    const matches: Array<any> = [];
-
-    // Normalize search query
-    const searchQuery = query?.toLowerCase().trim();
-    const searchType = type?.toLowerCase().trim();
-    const searchCategory = category?.toLowerCase().trim();
-
-    // Helper to check if text matches query (safely handles non-strings)
-    const matchesQuery = (text: unknown): boolean => {
-      if (!searchQuery) return true;
-      if (typeof text !== 'string') return false;
-      return text.toLowerCase().includes(searchQuery);
-    };
-
-    // Helper to check if item matches type filter
-    const matchesType = (itemType: string): boolean => {
-      if (!searchType) return true;
-      return itemType.toLowerCase() === searchType;
-    };
-
-    // Search items
-    for (const item of actor.items) {
-      const itemSystem = item.system;
-
-      // Check type filter
-      if (!matchesType(item.type)) continue;
-
-      // Check query filter (name or description)
-      // Ensure description is a string (could be an object in some systems)
-      let description = itemSystem?.description?.value || itemSystem?.description;
-      if (typeof description !== 'string') description = '';
-      if (!matchesQuery(item.name) && !matchesQuery(description)) continue;
-
-      // Build result based on item type
-      const result: any = {
-        id: item.id,
-        name: item.name,
-        type: item.type,
-      };
-
-      // Add description (truncated for token efficiency)
-      if (description) {
-        // Strip HTML and truncate
-        const plainText = description.replace(/<[^>]*>/g, '').trim();
-        result.description =
-          plainText.length > 300 ? `${plainText.substring(0, 300)}...` : plainText;
-      }
-
-      // Spell-specific fields
-      if (item.type === 'spell') {
-        result.level = itemSystem?.level?.value ?? itemSystem?.level ?? itemSystem?.rank ?? 0;
-        const itemRaw = item._source?.system;
-        result.prepared =
-          itemSystem?.prepared ?? itemRaw?.preparation?.prepared ?? itemSystem?.location?.prepared;
-        result.expended = itemSystem?.location?.expended;
-
-        // Get targeting info
-        if (systemId === 'pf2e') {
-          const targeting = this.extractPF2eSpellTargeting(itemSystem);
-          if (targeting.range) result.range = targeting.range;
-          if (targeting.target) result.target = targeting.target;
-          if (targeting.area) result.area = targeting.area;
-          result.actionCost = this.formatPF2eActionCost(itemSystem?.time?.value);
-          result.traits = itemSystem?.traits?.value || [];
-        } else if (systemId === 'dnd5e') {
-          const targeting = this.extractDnD5eSpellTargeting(itemSystem);
-          if (targeting.range) result.range = targeting.range;
-          if (targeting.target) result.target = targeting.target;
-          if (targeting.area) result.area = targeting.area;
-          result.actionCost = itemSystem?.activation?.type;
-        } else if (systemId === 'dsa5') {
-          const targeting = this.extractDSA5SpellTargeting(itemSystem);
-          if (targeting.range) result.range = targeting.range;
-          if (targeting.target) result.target = targeting.target;
-          if (targeting.area) result.area = targeting.area;
-          result.actionCost = itemSystem?.castingTime?.value;
-        } else if (systemId === 'wfrp4e') {
-          // WFRP4e spells use a Casting Number (CN) rather than levels/slots.
-          if (itemSystem?.range?.value) result.range = itemSystem.range.value;
-          if (itemSystem?.target?.value) result.target = itemSystem.target.value;
-          const cn = itemSystem?.cn?.value;
-          if (cn !== undefined && cn !== null) result.actionCost = `CN ${cn}`;
-        }
-
-        // Category filter for spells
-        if (searchCategory) {
-          const spellLevel = result.level || 0;
-          const isPrepared = result.prepared !== false;
-          const isCantrip = spellLevel === 0;
-          const isFocus =
-            itemSystem?.traits?.value?.includes('focus') || itemSystem?.category?.value === 'focus';
-
-          if (searchCategory === 'cantrip' && !isCantrip) continue;
-          if (searchCategory === 'prepared' && !isPrepared) continue;
-          if (searchCategory === 'focus' && !isFocus) continue;
-        }
-      }
-
-      // Equipment-specific fields
-      if (['weapon', 'armor', 'equipment', 'consumable', 'backpack', 'loot'].includes(item.type)) {
-        result.quantity = itemSystem?.quantity ?? 1;
-        result.equipped = itemSystem?.equipped ?? false;
-        result.invested = itemSystem?.equipped?.invested ?? itemSystem?.invested ?? undefined;
-
-        // Category filter for equipment
-        if (searchCategory) {
-          if (searchCategory === 'equipped' && !result.equipped) continue;
-          if (searchCategory === 'invested' && !result.invested) continue;
-        }
-      }
-
-      // WFRP4e equipment fields (British 'armour'; 'trapping' is generic gear)
-      if (
-        systemId === 'wfrp4e' &&
-        ['weapon', 'armour', 'trapping', 'ammunition', 'container'].includes(item.type)
-      ) {
-        result.quantity = itemSystem?.quantity?.value ?? 1;
-        result.equipped = itemSystem?.equipped?.value ?? item.isEquipped ?? false;
-
-        if (searchCategory === 'equipped' && !result.equipped) continue;
-      }
-
-      // WFRP4e prayer targeting (divine magic; item type 'prayer')
-      if (systemId === 'wfrp4e' && item.type === 'prayer') {
-        if (itemSystem?.range?.value) result.range = itemSystem.range.value;
-        if (itemSystem?.target?.value) result.target = itemSystem.target.value;
-      }
-
-      // Feat/feature fields
-      if (['feat', 'feature', 'class', 'ancestry', 'heritage', 'background'].includes(item.type)) {
-        if (systemId === 'pf2e') {
-          result.traits = itemSystem?.traits?.value || [];
-          result.level = itemSystem?.level?.value ?? undefined;
-          result.actionCost = this.formatPF2eActionCost(itemSystem?.actionType?.value);
-        }
-      }
-
-      // Action fields
-      if (item.type === 'action') {
-        if (systemId === 'pf2e') {
-          result.traits = itemSystem?.traits?.value || [];
-          result.actionCost = this.formatPF2eActionCost(
-            itemSystem?.actionType?.value || itemSystem?.actions?.value
-          );
-        }
-      }
-
-      matches.push(result);
-
-      // Stop if we've reached the limit
-      if (matches.length >= limit) break;
-    }
-
-    // Also search actions if type filter includes 'action' or is empty
-    if (!searchType || searchType === 'action') {
-      const actions =
-        actorAny.system?.actions || actorAny.items?.filter((i: any) => i.type === 'action') || [];
-      for (const action of actions) {
-        if (matches.length >= limit) break;
-
-        const actionName = action.name || action.label || '';
-        if (!matchesQuery(actionName)) continue;
-
-        const result: any = {
-          id: action.id || action.slug || actionName,
-          name: actionName,
-          type: 'action',
-          actionType: action.type || action.actionType || 'action',
-        };
-
-        if (systemId === 'pf2e') {
-          result.traits = action.traits || [];
-          result.actionCost = this.formatPF2eActionCost(action.actionCost?.value || action.actions);
-        }
-
-        matches.push(result);
-      }
-    }
-
-    // Search effects if type filter includes 'effect' or is empty
-    if (!searchType || searchType === 'effect') {
-      const effects = actor.effects || [];
-      for (const effect of effects) {
-        if (matches.length >= limit) break;
-
-        const effectAny = effect;
-        if (!matchesQuery(effectAny.name || effectAny.label)) continue;
-
-        matches.push({
-          id: effectAny.id,
-          name: effectAny.name || effectAny.label,
-          type: 'effect',
-          description: effectAny.description || undefined,
-        });
-      }
-    }
-
-    this.auditLog(
-      'searchCharacterItems',
-      {
-        characterId: actor.id,
-        query,
-        type,
-        category,
-        matchCount: matches.length,
-      },
-      'success'
-    );
-
-    const result: {
-      characterId: string;
-      characterName: string;
-      query?: string;
-      type?: string;
-      category?: string;
-      matches: any[];
-      totalMatches: number;
-    } = {
-      characterId: actor.id || '',
-      characterName: actor.name || '',
-      matches,
-      totalMatches: matches.length,
-    };
-
-    if (query) result.query = query;
-    if (type) result.type = type;
-    if (category) result.category = category;
-
-    return result;
+    return this.characterReader.searchCharacterItems(params);
   }
 
   /**
@@ -608,58 +368,6 @@ export class FoundryDataAccess {
    */
   private extractSpellcastingData(actor: Actor): SpellcastingEntry[] {
     return this.characterReader.extractSpellcastingData(actor);
-  }
-
-  /**
-   * TEMPORARY BRIDGE to CharacterReader.formatPF2eActionCost. Not a boundary member: nothing outside
-   * the class reaches it. Its only caller is `searchCharacterItems`, still on the facade.
-   * Deleted in stage C, in the same commit that restores `private` on the member it
-   * bridges — the widening is part of the bridge and nets to zero across the pass.
-   */
-  private formatPF2eActionCost(actionValue: any): string | undefined {
-    return this.characterReader.formatPF2eActionCost(actionValue);
-  }
-
-  /**
-   * TEMPORARY BRIDGE to CharacterReader.extractDnD5eSpellTargeting. Not a boundary member: nothing outside
-   * the class reaches it. Its only caller is `searchCharacterItems`, still on the facade.
-   * Deleted in stage C, in the same commit that restores `private` on the member it
-   * bridges — the widening is part of the bridge and nets to zero across the pass.
-   */
-  private extractDnD5eSpellTargeting(spellSystem: any): {
-    range?: string;
-    target?: string;
-    area?: string;
-  } {
-    return this.characterReader.extractDnD5eSpellTargeting(spellSystem);
-  }
-
-  /**
-   * TEMPORARY BRIDGE to CharacterReader.extractPF2eSpellTargeting. Not a boundary member: nothing outside
-   * the class reaches it. Its only caller is `searchCharacterItems`, still on the facade.
-   * Deleted in stage C, in the same commit that restores `private` on the member it
-   * bridges — the widening is part of the bridge and nets to zero across the pass.
-   */
-  private extractPF2eSpellTargeting(spellSystem: any): {
-    range?: string;
-    target?: string;
-    area?: string;
-  } {
-    return this.characterReader.extractPF2eSpellTargeting(spellSystem);
-  }
-
-  /**
-   * TEMPORARY BRIDGE to CharacterReader.extractDSA5SpellTargeting. Not a boundary member: nothing outside
-   * the class reaches it. Its only caller is `searchCharacterItems`, still on the facade.
-   * Deleted in stage C, in the same commit that restores `private` on the member it
-   * bridges — the widening is part of the bridge and nets to zero across the pass.
-   */
-  private extractDSA5SpellTargeting(spellSystem: any): {
-    range?: string;
-    target?: string;
-    area?: string;
-  } {
-    return this.characterReader.extractDSA5SpellTargeting(spellSystem);
   }
 
   /**
@@ -820,29 +528,15 @@ export class FoundryDataAccess {
    * Validate that Foundry is ready and world is active
    *
    * PERMANENT. It is a boundary member — queries.ts reaches it directly in many places —
-   * so it survives regardless of who calls it inside the class (currently
-   * `searchCharacterItems`, cluster B).
+   * so it survives regardless of who calls it inside the class. Since the character-reading
+   * extraction that is NOBODY: `searchCharacterItems`, its last intra-class caller, has
+   * moved to character-reader.ts and calls `security.validateFoundryState()` directly. The
+   * classification is unchanged. "Nothing inside the class calls it any more" is NOT
+   * evidence that a wrapper may be deleted — this is the first retained wrapper with zero
+   * intra-class callers, alongside `getCompendiumDocumentFull`.
    */
   validateFoundryState(): void {
     return this.security.validateFoundryState();
-  }
-
-  /**
-   * Audit log for write operations
-   *
-   * TEMPORARY BRIDGE, not a boundary member. Nothing outside the class reaches it. After
-   * the actor-CRUD extraction its ONLY remaining caller is `searchCharacterItems` (:633),
-   * which belongs to the character-reading cluster — so it expires with pass 5.2 and MUST
-   * NOT be deleted before then. Dropping from fifteen callers to one is not evidence of
-   * expiry; the remaining caller is.
-   */
-  private auditLog(
-    operation: string,
-    data: any,
-    result: 'success' | 'failure',
-    error?: string
-  ): void {
-    return this.security.auditLog(operation, data, result, error);
   }
 
   // ===== PHASE 2 & 3: WRITE OPERATIONS =====
@@ -1379,17 +1073,6 @@ export class FoundryDataAccess {
     playerIdentifier?: string;
   }): Promise<any> {
     return this.actorCrud.getActorOwnership(data);
-  }
-
-  /**
-   * Find actor by name or ID
-   *
-   * TEMPORARY BRIDGE, not a boundary member. Its only remaining caller after the
-   * actor-CRUD extraction is `searchCharacterItems` (:429), character-reading cluster, so
-   * it expires with pass 5.2 and not with this one.
-   */
-  private findActorByIdentifier(identifier: string): any {
-    return this.actorResolver.findActorByIdentifier(identifier);
   }
 
   /**
