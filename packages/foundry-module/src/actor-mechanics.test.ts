@@ -206,11 +206,10 @@ describe('addSaveFeatureToActor', () => {
     expect(activity.target.template.type).toBe('cone');
     expect(activity.target.template.units).toBe('m');
     expect(activity.target.affects.type).toBe('ally');
-    // BUG (pinned as-is, do not "fix" during a move): the size expression is
-    // `mappedAreaType ? String(data.areaSize) : ''`, which guards on the area
-    // TYPE, not the area SIZE — so a missing areaSize is written as the literal
-    // string "undefined" rather than ''.
-    expect(activity.target.template.size).toBe('undefined');
+    // The size expression tests the presence of the area SIZE it stringifies, not
+    // just the area TYPE, so a missing areaSize yields '' — never the literal
+    // string "undefined".
+    expect(activity.target.template.size).toBe('');
   });
 
   it('guards: wrong system and a duplicate name both throw and write nothing', async () => {
@@ -633,6 +632,26 @@ describe('addAuraToActor', () => {
     expect(res.warnings).toEqual([
       'Unknown damage type "entropy" — verify it matches dnd5e system values',
     ]);
+  });
+
+  it('branch: a missing areaSize yields an empty size, never the text "undefined"', async () => {
+    const actor = makeActor('Banshee', { type: 'npc' });
+    installDnd5e(actor);
+    const da = await makeDataAccess();
+
+    // The server tool's schema makes areaSize mandatory for an aura, so this input
+    // only arrives through the bridge query directly. The builder must still not
+    // write a stringified `undefined` into the document.
+    await da.addAuraToActor({
+      actorIdentifier: 'Banshee',
+      featureName: 'Silent Nimbus',
+      damageParts: [{ number: 1, denomination: 6, type: 'psychic' }],
+      areaType: 'cube',
+      areaSize: undefined,
+    });
+
+    const activity = world.embeddedCreates[0].docs[0].system.activities[world.randomIds[0]];
+    expect(activity.target.template.size).toBe('');
   });
 });
 

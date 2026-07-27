@@ -4783,7 +4783,7 @@ export class FoundryDataAccess {
                   units: data.areaUnits,
                   count: '',
                   type: mappedAreaType,
-                  size: mappedAreaType ? String(data.areaSize) : '',
+                  size: mappedAreaType ? String(data.areaSize ?? '') : '',
                 },
                 affects: {
                   choice: false,
@@ -5397,7 +5397,7 @@ export class FoundryDataAccess {
                   units: data.areaUnits ?? 'ft',
                   count: '',
                   type: mappedAreaType,
-                  size: String(data.areaSize),
+                  size: String(data.areaSize ?? ''),
                   width: '',
                   height: '',
                 },
