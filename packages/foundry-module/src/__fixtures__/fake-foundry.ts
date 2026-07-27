@@ -42,6 +42,36 @@
  * `game.user.updateTokenTargets`, `foundry.utils.randomID` (DETERMINISTIC),
  * `game.world.setFlag`/`getFlag` so `FoundrySecurity.auditLog` is observable,
  * `createEmbeddedDocuments` recording, and a selectable `game.system.id`.
+ *
+ * ── Additive for the compendium/creature-search characterization tests ────────
+ *
+ * `game.packs` existed but only far enough for the mechanics builders, which
+ * reach a pack index and `getDocument().toObject()` and nothing else. The search
+ * cluster reaches further, so four things are added, all additive:
+ *
+ * 1. `pack.metadata.system` / `.private` — `getAvailablePacks` returns them.
+ * 2. `pack.getDocument()` now returns a document whose FIELDS are own properties
+ *    (`id`, `name`, `type`, `img`, `system`, `items`, `effects`) as well as a
+ *    `toObject()`. `getCompendiumDocumentFull` reads the fields directly; the
+ *    mechanics builders only ever called `toObject()`, which is unchanged.
+ * 3. `pack.getDocuments()` (plural) — how `PersistentCreatureIndex` loads a pack.
+ * 4. `game.settings.get` — `searchCompendium` and `listCreaturesByCriteria` both
+ *    consult `enableEnhancedCreatureIndex`. Unset reads as `undefined`, i.e.
+ *    disabled, which is the basic-search path.
+ *
+ * Plus a fake world FILE STORE (`foundry.applications.apps.FilePicker` +
+ * `fetch`), because `PersistentCreatureIndex` persists the enhanced creature
+ * index as JSON in the world directory. That is what makes "rebuild through the
+ * facade, then read through the facade, and observe the rebuild" a real
+ * round-trip rather than a stub. `creatureIndex` seeds a valid persisted index
+ * (fingerprints computed exactly as `generatePackFingerprint` does, so
+ * `isIndexValid` accepts it); `failIndexWrite` makes the upload fail, which is
+ * how a rebuild is made to throw and the fallback search path is reached.
+ *
+ * `world.hooks` records every `Hooks.on`/`once` registration. That is not
+ * decoration: `PersistentCreatureIndex`'s constructor is the ONLY thing in this
+ * package that registers `createDocument`/`createCompendium`, so counting those
+ * registrations counts the live index instances.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -99,6 +129,13 @@ export interface UpdateCall {
 export interface FakePackEntry {
   _id: string;
   name: string;
+  /**
+   * Index-entry fields. A real pack index carries whatever `fields` were asked
+   * for; `searchCompendium` reads `type`, `img` and `description` off it.
+   */
+  type?: string;
+  img?: string;
+  description?: string;
   /** Full document data returned by `pack.getDocument()`. Omit for "index-only". */
   doc?: Record<string, any>;
 }
@@ -111,6 +148,10 @@ export interface FakePackSpec {
   entries: FakePackEntry[];
   /** Start out already indexed, so `getIndex()` is not called. */
   indexed?: boolean;
+  /** `pack.metadata.system` — echoed by `getAvailablePacks`. */
+  system?: string;
+  /** `pack.metadata.private` — echoed by `getAvailablePacks`. */
+  private?: boolean;
 }
 
 export interface FakeToken {
@@ -143,6 +184,18 @@ export interface FakeWorld {
   randomIds: string[];
   /** `pack.getIndex()` calls, by pack id — proves the index is built once. */
   packIndexCalls: string[];
+  /** `pack.getDocuments()` calls, by pack id. */
+  packDocumentsCalls: string[];
+  /** Every `Hooks.on` / `Hooks.once` registration, by hook name, in order. */
+  hooks: string[];
+  /** The fake world file store: path → parsed JSON. */
+  files: Map<string, any>;
+  /** Paths handed to `FilePicker.upload`, in order. */
+  fileUploads: string[];
+  /** Paths `fetch` was called for, in order. */
+  fileFetches: string[];
+  /** `ui.notifications` messages, as `<level>:<message>`. */
+  notifications: string[];
   /** Token-id arrays passed to `game.user.updateTokenTargets`. */
   targetUpdates: string[][];
   /**
@@ -165,6 +218,28 @@ export interface InstallOptions {
   systemId?: string;
   isGM?: boolean;
   packs?: FakePackSpec[];
+  /** `game.settings.get(<any scope>, key)` values. Unset keys read `undefined`. */
+  settings?: Record<string, any>;
+  /**
+   * Seed a VALID persisted enhanced creature index, exactly as
+   * `PersistentCreatureIndex.savePersistedIndex` would have written it — so
+   * `getEnhancedIndex()` loads it instead of rebuilding. Pack fingerprints are
+   * computed the way `generatePackFingerprint` computes them, so `isIndexValid`
+   * accepts the file whatever packs are installed.
+   */
+  creatureIndex?: {
+    creatures: any[];
+    /** Defaults to `systemId` — they must match or the index is invalidated. */
+    gameSystem?: string;
+    /** Defaults to the current `'1.0.0'`. */
+    version?: string;
+  };
+  /**
+   * Make the index-file upload fail. `savePersistedIndex` then throws, so a
+   * rebuild rejects — which is how the creature-search failure/fallback path is
+   * reached without stubbing anything.
+   */
+  failIndexWrite?: boolean;
   /**
    * Installs `game.scenes` — WITHOUT this, `game.scenes` is undefined, which is a
    * load-bearing property of the art tests. Only pass it when the code under test
@@ -315,13 +390,33 @@ function actorFromCreateDoc(doc: Record<string, any>): FakeActor {
 
 // ─── Compendium packs ─────────────────────────────────────────────────────────
 
+/**
+ * A pack document. A real Foundry document exposes its fields as own properties
+ * AND a `toObject()`; both are used (the mechanics builders take `toObject()`,
+ * `getCompendiumDocumentFull` reads the fields).
+ */
+function makeDocument(entry: FakePackEntry): Record<string, any> {
+  const data = entry.doc as Record<string, any>;
+  return {
+    ...data,
+    id: (data._id as string) ?? entry._id,
+    toObject: () => structuredClone(data),
+  };
+}
+
 function makePack(spec: FakePackSpec): Record<string, any> {
   const index = new Map<string, FakePackEntry>();
   for (const entry of spec.entries) {
     index.set(entry._id, entry);
   }
   const pack: Record<string, any> = {
-    metadata: { id: spec.id, label: spec.label ?? spec.id, type: spec.type ?? 'Item' },
+    metadata: {
+      id: spec.id,
+      label: spec.label ?? spec.id,
+      type: spec.type ?? 'Item',
+      system: spec.system,
+      private: spec.private ?? false,
+    },
     indexed: spec.indexed ?? false,
     index,
     getIndex: async (_options?: unknown) => {
@@ -332,11 +427,32 @@ function makePack(spec: FakePackSpec): Record<string, any> {
     getDocument: async (id: string) => {
       const entry = index.get(id);
       if (!entry?.doc) return null;
-      const data = entry.doc;
-      return { toObject: () => structuredClone(data) };
+      return makeDocument(entry);
+    },
+    getDocuments: async () => {
+      world.packDocumentsCalls.push(spec.id);
+      return spec.entries.filter(e => e.doc).map(e => makeDocument(e));
     },
   };
   return pack;
+}
+
+/**
+ * `PersistentCreatureIndex.generatePackFingerprint`, reproduced. Only
+ * `documentCount` and `checksum` are compared by `fingerprintsMatch`, but the
+ * whole record is written so the seeded file has the real shape.
+ */
+function packFingerprintOf(pack: Record<string, any>): Record<string, any> {
+  const id = pack.metadata.id as string;
+  const label = pack.metadata.label as string;
+  const size = (pack.index as Map<string, unknown>)?.size ?? 0;
+  return {
+    packId: id,
+    packLabel: label,
+    lastModified: Date.now(),
+    documentCount: size,
+    checksum: btoa(`${id}-${label}-${size}`).slice(0, 16),
+  };
 }
 
 // ─── Install ──────────────────────────────────────────────────────────────────
@@ -362,6 +478,12 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
     audit: [],
     randomIds: [],
     packIndexCalls: [],
+    packDocumentsCalls: [],
+    hooks: [],
+    files: new Map(),
+    fileUploads: [],
+    fileFetches: [],
+    notifications: [],
     targetUpdates: [],
     writes: [],
     refuse: new Set(),
@@ -372,9 +494,70 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
 
   const g = globalThis as any;
 
-  g.Hooks = { on: () => {}, once: () => {}, callAll: () => {} };
+  g.Hooks = {
+    on: (name: string) => {
+      w.hooks.push(name);
+    },
+    once: (name: string) => {
+      w.hooks.push(name);
+    },
+    callAll: () => {},
+  };
+
+  // ── The world file store ────────────────────────────────────────────────────
+  //
+  // `PersistentCreatureIndex` keeps the enhanced creature index as JSON under
+  // `worlds/<id>/`, browsing with FilePicker, reading with `fetch`, writing with
+  // FilePicker.upload. All three are faked over one Map so a rebuild really does
+  // become readable by a later read.
+  const filePicker = {
+    browse: async (_source: string, dir: string) => ({
+      target: dir,
+      files: Array.from(w.files.keys()).filter(p => p.startsWith(`${dir}/`)),
+      dirs: [],
+    }),
+    upload: async (_source: string, dir: string, file: any) => {
+      const path = `${dir}/${file.name as string}`;
+      w.fileUploads.push(path);
+      if (options.failIndexWrite) return null;
+      w.files.set(path, JSON.parse((await file.text()) as string));
+      return { path, status: 'success' };
+    },
+  };
+
+  g.fetch = async (path: string, init?: { method?: string }) => {
+    w.fileFetches.push(path);
+    if (init?.method === 'DELETE') {
+      w.files.delete(path);
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+    if (!w.files.has(path)) {
+      return { ok: false, status: 404, json: async () => ({}) };
+    }
+    return { ok: true, status: 200, json: async () => structuredClone(w.files.get(path)) };
+  };
+
+  g.ui = {
+    notifications: {
+      // Returns null on purpose: the real return value is a Notification the
+      // caller may `.remove()`, and null keeps that branch out of the way.
+      info: (m: string) => {
+        w.notifications.push(`info:${m}`);
+        return null;
+      },
+      warn: (m: string) => {
+        w.notifications.push(`warn:${m}`);
+        return null;
+      },
+      error: (m: string) => {
+        w.notifications.push(`error:${m}`);
+        return null;
+      },
+    },
+  };
 
   g.foundry = {
+    applications: { apps: { FilePicker: { implementation: filePicker } } },
     utils: {
       getProperty: (obj: any, p: string) => p.split('.').reduce((a: any, k) => a?.[k], obj),
       // DETERMINISTIC on purpose: a characterization test needs to name the
@@ -395,6 +578,8 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
   for (const spec of options.packs ?? []) {
     packs.set(spec.id, makePack(spec));
   }
+
+  const settingValues: Record<string, any> = { ...(options.settings ?? {}) };
 
   // `game.world` carries getFlag/setFlag so FoundrySecurity.auditLog actually
   // persists — that is how `world.audit` gets filled. Foundry stores these on the
@@ -427,7 +612,32 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
     actors: w.actors,
     folders: w.folders,
     packs,
+    settings: {
+      get: (_scope: string, key: string) => settingValues[key],
+      set: async (_scope: string, key: string, value: any) => {
+        settingValues[key] = value;
+      },
+    },
   };
+
+  // Seed a valid persisted enhanced creature index, if asked for. Written after
+  // the packs exist because its fingerprints are derived from them.
+  if (options.creatureIndex) {
+    const seed = options.creatureIndex;
+    w.files.set(`worlds/${gameWorld.id}/enhanced-creature-index.json`, {
+      metadata: {
+        version: seed.version ?? '1.0.0',
+        timestamp: Date.now(),
+        // Saved form is an entry array; the loader turns it back into a Map.
+        packFingerprints: Array.from(packs.values())
+          .filter(p => p.metadata.type === 'Actor')
+          .map(p => [p.metadata.id as string, packFingerprintOf(p)]),
+        totalCreatures: seed.creatures.length,
+        gameSystem: seed.gameSystem ?? options.systemId ?? 'worldofdarkness',
+      },
+      creatures: seed.creatures,
+    });
+  }
 
   // NOTE: `game.scenes` is installed ONLY on request. Its absence is a
   // load-bearing property of the actor-art tests. See the header.
