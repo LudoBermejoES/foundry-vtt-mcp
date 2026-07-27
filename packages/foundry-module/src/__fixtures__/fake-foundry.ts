@@ -72,11 +72,61 @@
  * decoration: `PersistentCreatureIndex`'s constructor is the ONLY thing in this
  * package that registers `createDocument`/`createCompendium`, so counting those
  * registrations counts the live index instances.
+ *
+ * ── Additive for the actor-CRUD characterization tests ───────────────────────
+ *
+ * The actor-CRUD cluster writes through five Foundry entry points none of the
+ * three earlier test files reached, so five things are added — all additive, and
+ * all recording their payload rather than returning a canned value:
+ *
+ * 1. **A real `Scene`.** `game.scenes.current` now carries `grid.size`, `width`,
+ *    `height` and a recording `createEmbeddedDocuments`, because
+ *    `addActorsToScene` writes Token documents to it and
+ *    `calculateTokenPosition` reads all three geometry fields. `activeScene` is
+ *    still opt-in — its ABSENCE is load-bearing for the art tests (see (2) in
+ *    the header above) — but when asked for it is now a scene you can write to.
+ *    `scene.tokens` gained a Collection `get`, which is what
+ *    `ActorResolver.findActorByIdentifier`'s token fallback actually calls.
+ * 2. **`Actor.createDocuments` and `Actor.deleteDocuments`.** `createActors`
+ *    uses the plural create and `deleteActors` the plural delete; neither
+ *    existed. `createDocuments` records into the SAME `createCalls` recorder as
+ *    the singular `Actor.create`, so a document assertion reads the same way
+ *    whichever entry point built it; `deleteDocuments` records into
+ *    `actorDeletes`.
+ * 3. **`actor.updateEmbeddedDocuments`** (`updateWfrp4eActor`,
+ *    `addWfrp4eItems`), and `update()` on every embedded item
+ *    (`updateActorItems`). Both record, and both EXPAND dotted keys
+ *    (`system.advances.value`) into nested state the way Foundry does — which
+ *    matters because the wfrp4e methods read the item back after writing and
+ *    report what they read.
+ * 4. **`actor.items` is a Collection**, not a bare array: `removeActorItems`,
+ *    `updateActorItems`, `deleteActorItems` and `addWfrp4eItems` all call
+ *    `actor.items.get(id)`. `get` is non-enumerable, so the array still
+ *    spreads, clones and deep-equals exactly as before.
+ * 5. **`game.users`, `actor.ownership` and `actor.testUserPermission`.**
+ *    `setActorOwnership` writes an ownership map and `getActorOwnership` reads
+ *    one back through `testUserPermission`, which is implemented here the way
+ *    Foundry implements it (per-user entry, else `default`, else NONE) rather
+ *    than stubbed per test.
+ *
+ * `game.packs` and each pack's `index` are now Collections rather than plain
+ * `Map`s — same `get`/`size`/`values()`, but iterating them yields VALUES, which
+ * is what Foundry's `Collection` does and what `addWfrp4eItems` relies on
+ * (`Array.from(game.packs)`, `for (const entry of index)`). Every other reader in
+ * the package already goes through `.values()` explicitly, so nothing else moves.
+ *
+ * Plus two system-shaped actor builders, `makeWfrp4eActor` and `makeMgt2eActor`,
+ * because `updateWfrp4eActor`/`addWfrp4eItems` are 461 lines that only run
+ * against a wfrp4e-shaped `system` + skill/career items, and `createActors`
+ * branches on `game.system.id === 'mgt2e'`.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // ─── Shapes ───────────────────────────────────────────────────────────────────
+
+/** `actor.items` is a Foundry Collection too: iterable, indexed AND keyed. */
+export type FakeItemCollection = any[] & { get: (id: string) => any };
 
 export interface FakeActor {
   id: string;
@@ -86,15 +136,32 @@ export interface FakeActor {
   img?: string;
   flags: Record<string, any>;
   folder?: { name: string; id?: string } | string | null;
-  items: any[];
+  items: FakeItemCollection;
   effects: any[];
+  /** Foundry's per-user permission map. `setActorOwnership` rewrites it. */
+  ownership?: Record<string, number>;
   prototypeToken?: { toObject: () => Record<string, any> };
   /** Throws, on purpose. See load-bearing property (1). */
   getFlag: (scope: string, key: string) => never;
   update: (patch: Record<string, any>) => Promise<void>;
   createEmbeddedDocuments: (type: string, docs: any[]) => Promise<any[]>;
+  updateEmbeddedDocuments: (type: string, updates: any[]) => Promise<any[]>;
   deleteEmbeddedDocuments: (type: string, ids: string[]) => Promise<void>;
+  /** Foundry's own rule: the user's own entry, else `default`, else NONE. */
+  testUserPermission: (user: { id: string }, level: string) => boolean;
 }
+
+export interface FakeUser {
+  id: string;
+  name: string;
+  isGM: boolean;
+  active?: boolean;
+}
+
+export type FakeUserCollection = FakeUser[] & {
+  get: (id: string) => FakeUser | undefined;
+  getName: (name: string) => FakeUser | undefined;
+};
 
 export interface FakeFolder {
   id: string;
@@ -126,6 +193,18 @@ export interface UpdateCall {
   patch: Record<string, any>;
 }
 
+export interface EmbeddedUpdateCall {
+  actorId: string;
+  type: string;
+  updates: Record<string, any>[];
+}
+
+export interface SceneTokenCreateCall {
+  sceneId: string;
+  type: string;
+  docs: Record<string, any>[];
+}
+
 export interface FakePackEntry {
   _id: string;
   name: string;
@@ -138,6 +217,13 @@ export interface FakePackEntry {
   description?: string;
   /** Full document data returned by `pack.getDocument()`. Omit for "index-only". */
   doc?: Record<string, any>;
+  /**
+   * `document.documentName` — the Foundry document CLASS, not the actor type.
+   * `createActorFromCompendiumEntry` rejects anything that is not `'Actor'`.
+   * Set as an own property of the document rather than folded into `doc`, so it
+   * does not appear in `toObject()`.
+   */
+  documentName?: string;
 }
 
 export interface FakePackSpec {
@@ -176,6 +262,19 @@ export interface FakeWorld {
   /** Every `createEmbeddedDocuments` call, docs cloned at call time. */
   embeddedCreates: EmbeddedCreateCall[];
   embeddedDeletes: Array<{ actorId: string; type: string; ids: string[] }>;
+  /** Every `actor.updateEmbeddedDocuments` call, updates cloned at call time. */
+  embeddedUpdates: EmbeddedUpdateCall[];
+  /** Every embedded `item.update()` call — `updateActorItems`' write. */
+  itemUpdates: UpdateCall[];
+  /**
+   * Batch sizes handed to `Actor.createDocuments`, in order. The documents
+   * themselves land in `createCalls`, one entry each, alongside `Actor.create`'s.
+   */
+  createDocumentsBatches: number[];
+  /** Id arrays handed to `Actor.deleteDocuments`, in order. */
+  actorDeletes: string[][];
+  /** Token documents handed to `scene.createEmbeddedDocuments`, cloned. */
+  sceneTokenCreates: SceneTokenCreateCall[];
   /** Chat messages created via the `ChatMessage` global. */
   chatMessages: Record<string, any>[];
   /** What `FoundrySecurity.auditLog` persisted. */
@@ -200,8 +299,9 @@ export interface FakeWorld {
   targetUpdates: string[][];
   /**
    * Read-path's single write log: `create:<name>`, `folder:<name>`,
-   * `update:<id>:<patch keys>`, `embedCreate:<id>:<n>`, `embedDelete:<id>:<n>`.
-   * A read-only operation must leave this EMPTY.
+   * `update:<id>:<patch keys>`, `embedCreate:<id>:<n>`, `embedDelete:<id>:<n>`,
+   * plus `embedUpdate:<id>:<n>`, `itemUpdate:<id>`, `deleteActors:<n>` and
+   * `sceneTokens:<n>`. A read-only operation must leave this EMPTY.
    */
   writes: string[];
   /** Names `Actor.create` should refuse (return null) for. */
@@ -210,6 +310,10 @@ export interface FakeWorld {
   explode: Set<string>;
   /** Item names `createEmbeddedDocuments` should throw for. */
   failEmbed: Set<string>;
+  /** Make `scene.createEmbeddedDocuments` throw — the token-write failure path. */
+  failSceneTokens: boolean;
+  /** Make every `actor.update()` throw — the wfrp4e write-failure path. */
+  failActorUpdate: boolean;
 }
 
 export interface InstallOptions {
@@ -218,6 +322,18 @@ export interface InstallOptions {
   systemId?: string;
   isGM?: boolean;
   packs?: FakePackSpec[];
+  /**
+   * `game.users`. The active GM (`game.user`) is NOT added automatically — pass
+   * it if the code under test enumerates users, because `getActorOwnership`
+   * filters GMs out and "no non-GM users" is a real branch.
+   */
+  users?: FakeUser[];
+  /**
+   * `game.system.documentTypes.Item` — the system's declared Item types.
+   * UNSET means the key is absent, which `addActorItems` reads as "this system
+   * declares nothing, so validate no types". Both branches are real.
+   */
+  itemTypes?: string[];
   /** `game.settings.get(<any scope>, key)` values. Unset keys read `undefined`. */
   settings?: Record<string, any>;
   /**
@@ -243,9 +359,19 @@ export interface InstallOptions {
   /**
    * Installs `game.scenes` — WITHOUT this, `game.scenes` is undefined, which is a
    * load-bearing property of the art tests. Only pass it when the code under test
-   * genuinely needs a scene (e.g. `useItem` targeting).
+   * genuinely needs a scene (e.g. `useItem` targeting, `addActorsToScene`).
+   *
+   * The geometry fields feed `calculateTokenPosition` and are what the token
+   * coordinates it writes are computed from, so they default to values that make
+   * the arithmetic legible (grid 100, canvas 1000×800) rather than to Foundry's.
    */
-  activeScene?: { tokens: FakeToken[] };
+  activeScene?: {
+    tokens: FakeToken[];
+    /** `scene.grid.size`. Omit for 100; pass `null` for no grid at all. */
+    gridSize?: number | null;
+    width?: number;
+    height?: number;
+  };
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -273,6 +399,102 @@ function makeCollection(actors: FakeActor[]): FakeActorCollection {
   return collection;
 }
 
+function makeUserCollection(users: FakeUser[]): FakeUserCollection {
+  return makeCollection(users as any) as unknown as FakeUserCollection;
+}
+
+/**
+ * Give an array Foundry's `Collection.get`. Non-enumerable, so the array still
+ * spreads, `structuredClone`s and deep-equals exactly as a bare array does —
+ * which is why adding this to `actor.items` and `scene.tokens` changes no
+ * existing assertion.
+ */
+function attachGet<T extends { id?: string }>(items: T[]): T[] & { get: (id: string) => any } {
+  Object.defineProperty(items, 'get', {
+    value: (id: string) => items.find(i => (i as any)?.id === id),
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  return items as T[] & { get: (id: string) => any };
+}
+
+/**
+ * A Foundry `Collection`: a `Map` whose ITERATOR yields values, not entries.
+ * `game.packs` and `pack.getIndex()` are both Collections in Foundry, and
+ * `addWfrp4eItems` relies on it (`Array.from(game.packs)`,
+ * `for (const entry of index)`). A plain `Map` there would silently yield
+ * `[key, value]` pairs and match nothing.
+ */
+class FakeFoundryCollection<V> extends Map<string, V> {
+  override [Symbol.iterator](): any {
+    return this.values();
+  }
+}
+
+/**
+ * Foundry's `mergeObject` dotted-key expansion, as far as the actor-CRUD paths
+ * need it: `{'system.advances.value': 3}` becomes nested state. Used by
+ * `updateEmbeddedDocuments` and by embedded `item.update()`, both of which the
+ * wfrp4e methods write with dotted keys and then READ BACK to build their
+ * response — so without expansion the read-back would pin fixture behaviour
+ * rather than the method's.
+ */
+function applyPatch(target: Record<string, any>, patch: Record<string, any>): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (!key.includes('.')) {
+      target[key] = value;
+      continue;
+    }
+    const parts = key.split('.');
+    let cursor: Record<string, any> = target;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (typeof cursor[part] !== 'object' || cursor[part] === null) cursor[part] = {};
+      cursor = cursor[part] as Record<string, any>;
+    }
+    cursor[parts[parts.length - 1]] = value;
+  }
+}
+
+/**
+ * `Document#testUserPermission`, as Foundry implements it: the user's own
+ * ownership entry wins, then `default`, then NONE. Reproduced rather than
+ * stubbed per test, because `getActorOwnership` calls it three times per user
+ * and a stub would let a swapped level pass unnoticed.
+ */
+const OWNERSHIP_LEVELS: Record<string, number> = {
+  NONE: 0,
+  LIMITED: 1,
+  OBSERVER: 2,
+  OWNER: 3,
+};
+
+function testUserPermissionOf(
+  ownership: Record<string, number> | undefined,
+  user: { id: string },
+  level: string
+): boolean {
+  const map = ownership ?? {};
+  const held = map[user.id] ?? map.default ?? 0;
+  return held >= (OWNERSHIP_LEVELS[level] ?? 0);
+}
+
+/** Attach a recording `update()` to an embedded item document. */
+function attachItemUpdate(item: Record<string, any>): void {
+  if (!item || typeof item !== 'object' || typeof item.update === 'function') return;
+  Object.defineProperty(item, 'update', {
+    value: async (patch: Record<string, any>) => {
+      world.itemUpdates.push({ id: item.id as string, patch: structuredClone(patch) });
+      world.writes.push(`itemUpdate:${item.id as string}`);
+      applyPatch(item, patch);
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+
 // ─── Actors ───────────────────────────────────────────────────────────────────
 
 function throwingGetFlag(scope: string, key: string): never {
@@ -280,10 +502,15 @@ function throwingGetFlag(scope: string, key: string): never {
 }
 
 function attachWriteMethods(actor: FakeActor): void {
+  attachGet(actor.items);
+  for (const item of actor.items) attachItemUpdate(item);
   actor.update = async patch => {
     world.updateCalls.push(actor.id);
     world.updates.push({ id: actor.id, patch: structuredClone(patch) });
     world.writes.push(`update:${actor.id}:${Object.keys(patch).join(',')}`);
+    if (world.failActorUpdate) {
+      throw new Error(`Foundry refused to update ${actor.name}`);
+    }
     Object.assign(actor, patch);
   };
   actor.createEmbeddedDocuments = async (type, docs) => {
@@ -299,14 +526,31 @@ function attachWriteMethods(actor: FakeActor): void {
       // Foundry ids are exposed as both `id` and `_id` on a real document.
       _id: `item-${nextId - 1}`,
     }));
+    for (const item of created) attachItemUpdate(item);
     actor.items.push(...created);
     return created;
+  };
+  actor.updateEmbeddedDocuments = async (type, updates) => {
+    world.embeddedUpdates.push({ actorId: actor.id, type, updates: structuredClone(updates) });
+    world.writes.push(`embedUpdate:${actor.id}:${updates.length}`);
+    const touched: any[] = [];
+    for (const u of updates) {
+      const item = actor.items.get(u._id as string);
+      if (!item) continue;
+      const patch = Object.fromEntries(
+        Object.entries(u as Record<string, any>).filter(([k]) => k !== '_id')
+      );
+      applyPatch(item as Record<string, any>, patch);
+      touched.push(item);
+    }
+    return touched;
   };
   actor.deleteEmbeddedDocuments = async (type, ids) => {
     world.embeddedDeletes.push({ actorId: actor.id, type, ids: [...ids] });
     world.writes.push(`embedDelete:${actor.id}:${ids.length}`);
-    actor.items = actor.items.filter((i: any) => !ids.includes(i.id));
+    actor.items = attachGet(actor.items.filter((i: any) => !ids.includes(i.id)));
   };
+  actor.testUserPermission = (user, level) => testUserPermissionOf(actor.ownership, user, level);
 }
 
 /**
@@ -324,6 +568,8 @@ export function makeActor(
     folder?: string | null;
     items?: any[];
     system?: Record<string, any>;
+    /** Foundry's ownership map, e.g. `{ 'user-2': 3, default: 0 }`. */
+    ownership?: Record<string, number>;
   } = {}
 ): FakeActor {
   const actor: FakeActor = {
@@ -334,12 +580,15 @@ export function makeActor(
     ...(opts.img !== undefined ? { img: opts.img } : {}),
     flags: opts.flags ?? {},
     folder: opts.folder !== undefined ? (opts.folder ? { name: opts.folder } : null) : null,
-    items: opts.items ?? [],
+    items: (opts.items ?? []) as FakeItemCollection,
     effects: [],
+    ...(opts.ownership !== undefined ? { ownership: opts.ownership } : {}),
     getFlag: throwingGetFlag,
     update: async () => undefined,
     createEmbeddedDocuments: async () => [],
+    updateEmbeddedDocuments: async () => [],
     deleteEmbeddedDocuments: async () => undefined,
+    testUserPermission: () => false,
   };
   if (opts.tokenSrc !== null) {
     const src = opts.tokenSrc ?? `wod20-tokens/${name}.webp`;
@@ -373,12 +622,15 @@ function actorFromCreateDoc(doc: Record<string, any>): FakeActor {
     items: ((doc.items as any[]) ?? []).map((d: any, i: number) => ({
       ...(typeof d === 'object' && d !== null ? d : {}),
       id: `item-${nextId}-${i}`,
-    })),
+    })) as FakeItemCollection,
     effects: [],
+    ...(doc.ownership !== undefined ? { ownership: doc.ownership as Record<string, number> } : {}),
     getFlag: throwingGetFlag,
     update: async () => undefined,
     createEmbeddedDocuments: async () => [],
+    updateEmbeddedDocuments: async () => [],
     deleteEmbeddedDocuments: async () => undefined,
+    testUserPermission: () => false,
   };
   if (doc.prototypeToken !== undefined) {
     const source = doc.prototypeToken as Record<string, any>;
@@ -386,6 +638,90 @@ function actorFromCreateDoc(doc: Record<string, any>): FakeActor {
   }
   attachWriteMethods(actor);
   return actor;
+}
+
+// ─── System-shaped actors ─────────────────────────────────────────────────────
+
+/**
+ * A WFRP4e-shaped actor. `updateWfrp4eActor` reads
+ * `system.characteristics.<key>.{initial,advances,modifier,value,bonus}`,
+ * `system.status.wounds` and `system.details.move.value`, and edits embedded
+ * `skill` / `career` items; `addWfrp4eItems` adds to the same item list. The
+ * characteristic `value`/`bonus` are the DERIVED fields WFRP4e recomputes on
+ * update — seeded here so the methods' read-back-after-write is observable
+ * without pretending the fake recomputes anything.
+ */
+export function makeWfrp4eActor(
+  name: string,
+  opts: {
+    characteristics?: Record<string, Record<string, any>>;
+    wounds?: { value?: number; max?: number };
+    move?: number;
+    /** Skill items: name → advances (`system.advances.value`). */
+    skills?: Record<string, number>;
+    /** Career items: name → whether it is currently the active career. */
+    careers?: Record<string, boolean>;
+  } = {}
+): FakeActor {
+  const items: any[] = [];
+  let seq = 0;
+  for (const [skill, advances] of Object.entries(opts.skills ?? {})) {
+    items.push({
+      id: `skill-${seq++}`,
+      name: skill,
+      type: 'skill',
+      system: {
+        advances: { value: advances },
+        characteristic: { value: 'ws' },
+        total: { value: advances + 30 },
+      },
+    });
+  }
+  for (const [career, current] of Object.entries(opts.careers ?? {})) {
+    items.push({
+      id: `career-${seq++}`,
+      name: career,
+      type: 'career',
+      system: { current: { value: current } },
+    });
+  }
+  return makeActor(name, {
+    type: 'character',
+    items,
+    system: {
+      characteristics: opts.characteristics ?? {
+        ws: { initial: 30, advances: 0, modifier: 0, value: 30, bonus: 3 },
+        t: { initial: 32, advances: 0, modifier: 0, value: 32, bonus: 3 },
+      },
+      status: { wounds: opts.wounds ?? { value: 10, max: 12 } },
+      details: { move: { value: opts.move ?? 4 }, biography: { value: '' } },
+    },
+  });
+}
+
+/**
+ * An mgt2e-shaped (Mongoose Traveller 2e) actor. `createActors` builds documents
+ * of this shape from shorthand rather than reading one, so this is for the
+ * update side — `updateActors`' dotted-key expansion is exercised against
+ * `system.crewed.passengers`, the shape whose deletion-operator handling its
+ * comment describes.
+ */
+export function makeMgt2eActor(
+  name: string,
+  opts: { type?: string; system?: Record<string, any> } = {}
+): FakeActor {
+  return makeActor(name, {
+    type: opts.type ?? 'traveller',
+    system: opts.system ?? {
+      characteristics: {
+        STR: { value: 8, damage: 0, show: true },
+        DEX: { value: 7, damage: 0, show: true },
+        END: { value: 9, damage: 0, show: true },
+      },
+      skills: { pilot: { id: 'pilot', value: 1, trained: true } },
+      hits: { value: 24, max: 24 },
+    },
+  });
 }
 
 // ─── Compendium packs ─────────────────────────────────────────────────────────
@@ -400,12 +736,15 @@ function makeDocument(entry: FakePackEntry): Record<string, any> {
   return {
     ...data,
     id: (data._id as string) ?? entry._id,
+    // The document CLASS, not the actor type — own property only, so it stays
+    // out of `toObject()` exactly as a real DataModel keeps it out.
+    ...(entry.documentName !== undefined ? { documentName: entry.documentName } : {}),
     toObject: () => structuredClone(data),
   };
 }
 
 function makePack(spec: FakePackSpec): Record<string, any> {
-  const index = new Map<string, FakePackEntry>();
+  const index = new FakeFoundryCollection<FakePackEntry>();
   for (const entry of spec.entries) {
     index.set(entry._id, entry);
   }
@@ -474,6 +813,11 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
     updates: [],
     embeddedCreates: [],
     embeddedDeletes: [],
+    embeddedUpdates: [],
+    itemUpdates: [],
+    createDocumentsBatches: [],
+    actorDeletes: [],
+    sceneTokenCreates: [],
     chatMessages: [],
     audit: [],
     randomIds: [],
@@ -489,6 +833,8 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
     refuse: new Set(),
     explode: new Set(),
     failEmbed: new Set(),
+    failSceneTokens: false,
+    failActorUpdate: false,
   };
   const w = world;
 
@@ -574,7 +920,9 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
     },
   };
 
-  const packs = new Map<string, Record<string, any>>();
+  // A Collection, not a Map: `addWfrp4eItems` does `Array.from(game.packs)` and
+  // Foundry's Collection iterator yields values.
+  const packs = new FakeFoundryCollection<Record<string, any>>();
   for (const spec of options.packs ?? []) {
     packs.set(spec.id, makePack(spec));
   }
@@ -600,7 +948,19 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
   g.game = {
     ready: true,
     world: gameWorld,
-    system: { id: options.systemId ?? 'worldofdarkness' },
+    system: {
+      id: options.systemId ?? 'worldofdarkness',
+      // ABSENT unless asked for: `addActorItems` reads the absence as "this
+      // system declares no Item types, so validate none".
+      ...(options.itemTypes
+        ? {
+            documentTypes: {
+              Item: Object.fromEntries(options.itemTypes.map(t => [t, {}])),
+            },
+          }
+        : {}),
+    },
+    users: makeUserCollection(options.users ?? []),
     user: {
       id: 'user-1',
       name: 'Test GM',
@@ -642,26 +1002,67 @@ export function installFakeFoundry(options: InstallOptions = {}): FakeWorld {
   // NOTE: `game.scenes` is installed ONLY on request. Its absence is a
   // load-bearing property of the actor-art tests. See the header.
   if (options.activeScene) {
-    const scene = {
+    const spec = options.activeScene;
+    const scene: Record<string, any> = {
       id: 'scene-1',
       name: 'Test Scene',
       active: true,
-      tokens: options.activeScene.tokens,
+      // `scene.tokens` is a Collection in Foundry, and
+      // `ActorResolver.findActorByIdentifier`'s token fallback calls `.get()` on
+      // it — reached whenever an identifier matches no world actor.
+      tokens: attachGet(spec.tokens),
+      // Geometry `calculateTokenPosition` reads. `gridSize: null` installs NO
+      // grid, which is that method's `|| 100` fallback branch.
+      ...(spec.gridSize === null ? {} : { grid: { size: spec.gridSize ?? 100 } }),
+      width: spec.width ?? 1000,
+      height: spec.height ?? 800,
+      createEmbeddedDocuments: async (type: string, docs: Record<string, any>[]) => {
+        w.sceneTokenCreates.push({ sceneId: 'scene-1', type, docs: structuredClone(docs) });
+        w.writes.push(`sceneTokens:${docs.length}`);
+        if (w.failSceneTokens) {
+          throw new Error('Foundry refused to create tokens');
+        }
+        return docs.map((d, i) => ({ ...d, id: `token-${i}`, _id: `token-${i}` }));
+      },
     };
     g.game.scenes = Object.assign([scene], { active: scene, current: scene });
   }
 
+  const createOne = async (doc: Record<string, any>) => {
+    w.createCalls.push(structuredClone(doc));
+    w.writes.push(`create:${doc?.name as string}`);
+    if (w.explode.has(doc.name as string)) {
+      throw new Error(`Foundry exploded on ${doc.name as string}`);
+    }
+    if (w.refuse.has(doc.name as string)) return null;
+    const actor = actorFromCreateDoc(doc);
+    w.actors.push(actor);
+    return actor;
+  };
+
   g.Actor = {
-    create: async (doc: Record<string, any>) => {
-      w.createCalls.push(structuredClone(doc));
-      w.writes.push(`create:${doc?.name as string}`);
-      if (w.explode.has(doc.name as string)) {
-        throw new Error(`Foundry exploded on ${doc.name as string}`);
+    create: createOne,
+    // The plural create — `createActors`' entry point. Records into the SAME
+    // `createCalls` recorder as the singular one, so a document assertion reads
+    // the same way whichever built it, plus the batch size.
+    createDocuments: async (docs: Record<string, any>[]) => {
+      w.createDocumentsBatches.push(docs.length);
+      const created: any[] = [];
+      for (const doc of docs) {
+        const actor = await createOne(doc);
+        if (actor) created.push(actor);
       }
-      if (w.refuse.has(doc.name as string)) return null;
-      const actor = actorFromCreateDoc(doc);
-      w.actors.push(actor);
-      return actor;
+      return created;
+    },
+    deleteDocuments: async (ids: string[]) => {
+      w.actorDeletes.push([...ids]);
+      w.writes.push(`deleteActors:${ids.length}`);
+      const deleted = w.actors.filter(a => ids.includes(a.id));
+      for (const actor of deleted) {
+        const at = w.actors.indexOf(actor);
+        if (at >= 0) w.actors.splice(at, 1);
+      }
+      return deleted;
     },
   };
 
