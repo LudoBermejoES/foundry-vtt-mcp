@@ -1,0 +1,100 @@
+{
+  "_comment": [
+    "Worked example AND regression fixture: the plan for pass 5.3, the actor-CRUD",
+    "extraction (openspec/changes/archive/2026-07-27-extract-actor-crud).",
+    "",
+    "It is committed so that `npm run refactor:selfcheck` can replay a verified past",
+    "pass against the two historical file versions — a body-diff extractor that cannot",
+    "reproduce a pass that already happened is not ready for the next one.",
+    "",
+    "Reproduce by hand:",
+    "  git show 3cbe106:packages/foundry-module/src/data-access.ts > /tmp/base.ts",
+    "  git show 7bf9c77:packages/foundry-module/src/actor-crud.ts   > /tmp/actual.ts",
+    "  node scripts/refactor/member-text.mjs diff --baseline /tmp/base.ts \\",
+    "    --actual /tmp/actual.ts --plan scripts/refactor/fixtures/extract-actor-crud.plan.json",
+    "",
+    "Expected: 25 of 27 items byte-identical; createActorFromCompendiumEntry and",
+    "addWfrp4eItems reflow-only (90 -> 104 and 93 -> 102 columns against printWidth 100)."
+  ],
+
+  "printWidth": 100,
+  "baselineClass": "FoundryDataAccess",
+  "actualClass": "ActorCrud",
+
+  "members": [
+    "createActorFromCompendiumEntry",
+    "addActorItems",
+    "removeActorItems",
+    "addActorsToScene",
+    "calculateTokenPosition",
+    "setActorOwnership",
+    "updateWfrp4eActor",
+    "addWfrp4eItems",
+    "getActorOwnership",
+    "createNpcActor",
+    "createActors",
+    "normalizeMGT2eSkillKeys",
+    "updateActors",
+    "updateActorItems",
+    "deleteActorItems",
+    "deleteActors"
+  ],
+
+  "moduleScope": [
+    "ActorCreationResult",
+    "CreatedActorInfo",
+    "SceneTokenPlacement",
+    "TokenPlacementResult",
+    "NPC_DAMAGE_CANONICAL",
+    "NPC_CONDITION_CANONICAL",
+    "NPC_SIZE_MAP",
+    "NPC_SKILL_MAP",
+    "npcNormalizeCR",
+    "npcFormatCR",
+    "npcBuildSkillsBlock"
+  ],
+
+  "substitutions": [
+    {
+      "from": "this.validateFoundryState(",
+      "to": "this.security.validateFoundryState(",
+      "count": 9
+    },
+    { "from": "this.auditLog(", "to": "this.security.auditLog(", "count": 15 },
+    {
+      "from": "this.findActorByIdentifier(",
+      "to": "this.actorResolver.findActorByIdentifier(",
+      "count": 5
+    },
+    {
+      "from": "this.getOrCreateFolder(",
+      "to": "this.actorResolver.getOrCreateFolder(",
+      "count": 3
+    },
+    {
+      "_note": "third shape of permitted difference: a bare module-level identifier becoming an injected field read",
+      "from": "transactionManager.",
+      "to": "this.transactionManager.",
+      "count": 2
+    },
+    {
+      "_note": "three of the four moved type declarations gain an `export` keyword, because the retained facade delegations name them in signatures sliced from the pre-move text",
+      "from": "interface ActorCreationResult",
+      "to": "export interface ActorCreationResult",
+      "count": 1,
+      "items": ["ActorCreationResult"]
+    },
+    {
+      "from": "interface SceneTokenPlacement",
+      "to": "export interface SceneTokenPlacement",
+      "count": 1,
+      "items": ["SceneTokenPlacement"]
+    },
+    {
+      "from": "interface TokenPlacementResult",
+      "to": "export interface TokenPlacementResult",
+      "count": 1,
+      "items": ["TokenPlacementResult"]
+    }
+  ]
+}
