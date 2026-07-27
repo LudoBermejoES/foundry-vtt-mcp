@@ -102,15 +102,41 @@ fully independent of both A and C — it only needs `security` +
 makes D **the lowest-graph-risk cluster of the four**, not (as its size might
 suggest) a mid-risk one.
 
-The only confirmed cross-cluster edge among the unextracted material is
-**C → A**: ~~`createActorFromCompendium` and `createActorFromCompendiumEntry`
-call~~ — **wrong, it is one caller, not two.** `createActorFromCompendium` calls
-`this.findBestCompendiumMatch()` and `this.getCompendiumDocumentFull()` (both
-cluster A), once each. `createActorFromCompendiumEntry` calls
-`addActorsToScene`, `auditLog`, `getOrCreateFolder` and `validateFoundryState` —
-nothing in cluster A. This doesn't change the ordering conclusion, which held and
-was acted on — **A must be extracted before or together with C**, never after —
-it halves the surface C has to re-point.
+~~The only confirmed cross-cluster edge among the unextracted material is
+**C → A**~~ — **wrong twice over, and this is the premise the whole staging order was
+built on. Struck in place rather than deleted.**
+
+First correction (made by `extract-compendium-search`): it is one caller, not two.
+`createActorFromCompendium` calls `this.findBestCompendiumMatch()` and
+`this.getCompendiumDocumentFull()` (both cluster A), once each.
+`createActorFromCompendiumEntry` calls `addActorsToScene`, `auditLog`,
+`getOrCreateFolder` and `validateFoundryState` — nothing in cluster A.
+
+**Second correction, made by `extract-actor-crud`: there is no C → A edge at all.**
+`createActorFromCompendium` — the sole holder of both calls — is **dead surface**:
+`public`, 145 lines, and reached from nothing. No intra-class referrer, no member
+access in any reach site, no dynamic dispatch. The bridge **query** of that name is
+alive and its handler calls `createActorFromCompendiumEntry`, which is why a grep for
+the identifier returns four live-looking hits and the check has to be a member-access
+analysis. The dead-code requirement made deleting it mandatory rather than optional, so
+the C → A edge left with it and `actor-crud.ts` imports **nothing** from
+`compendium-search.ts`.
+
+So "**A must be extracted before or together with C**, never after" was a correct
+conclusion resting **entirely on dead code**. The order was still the right one — stage
+2 was worth doing first on its own merits — but not for the stated reason, and a pass
+that had followed this plan literally would have carried 191 lines of dead code into a
+new module and preserved a cross-cluster dependency that does not need to exist.
+
+**And the plan never mentions `transactionManager`, which is the one thing in cluster C
+that a verbatim move would have turned into a spec violation.** `data-access.ts`
+imported the module-level instance `transaction-manager.ts` exported; all eight uses
+were cluster C's (six inside the dead method, including the only `startTransaction`);
+and a collaborator reaching a shared service by importing a singleton is what the
+acyclic-DAG requirement forbids. `extract-actor-crud` injects it and deletes the
+instance export. A cross-boundary inventory that only asks about `this.x()` calls
+cannot see this shape at all — see the section below, which is exactly such an
+inventory.
 
 ## Cross-boundary `this.x()` calls, every instance found
 
@@ -263,13 +289,18 @@ kept for compatibility`. Migrated verbatim, the new module would have been
   not copy it**: stage 3's own candidate
   (`createActorFromCompendium`/`…Entry` → `addActorsToScene` →
   `calculateTokenPosition`) looks like a tree on current evidence, which is
-  exactly the kind of claim this one got wrong.
+  exactly the kind of claim this one got wrong. **Recomputed by
+  `extract-actor-crud`: it is a tree, confirmed** —
+  `createActorFromCompendiumEntry` → `addActorsToScene` → `calculateTokenPosition`,
+  with no back edge, so there was no cycle to move atomically. All three moved in one
+  commit anyway, which is what the tree shape allows and a cycle would have forced.
 - **Correction 3 — `createActorFromCompendiumEntry` does not call into this
   cluster.** `…Entry` calls `addActorsToScene`, `auditLog`, `getOrCreateFolder`
   and `validateFoundryState`. There is exactly **one** C→A caller,
   `createActorFromCompendium`, with one call each to `findBestCompendiumMatch` and
   `getCompendiumDocumentFull` — so stage 3 has half the surface here that this
-  document implies.
+  document implies. **Superseded by `extract-actor-crud`: stage 3 has NO surface here.**
+  That one C→A caller was dead surface and was deleted, so the count is zero, not one.
 - **Correction 4 — `moduleId` was NOT passed as a constructor string.** This
   document recommended "a plain string, same as `PersistentCreatureIndex` already
   receives it". `PersistentCreatureIndex`'s constructor takes **no arguments**; it
@@ -289,47 +320,93 @@ kept for compatibility`. Migrated verbatim, the new module would have been
   share state through the file and the round trip passes either way.
 - **Facade members left behind**: six thin delegations for the externally-reached
   members, plus a **temporary** `private` wrapper for `findBestCompendiumMatch`,
-  deletable when stage 3 re-points its one caller.
+  deletable when stage 3 re-points its one caller. **What happened instead:
+  `extract-actor-crud` deleted the wrapper because its one caller was itself
+  DELETED as dead surface, not re-pointed.** A temporary bridge's expiry condition is
+  the _absence of a caller_, not the arrival of a particular pass — worth internalising,
+  because the mirror-image mistake is live right now: `getOrCreateFolder`'s wrapper is
+  down to one caller (`importActors`, a permanent deferral) and is therefore
+  **permanent**, while `auditLog`/`findActorByIdentifier` are down to one caller each
+  and expire at stage 4. Same shape, three different lifetimes.
   `getCompendiumDocumentFull`'s delegation is **permanent** — `queries.ts`
   reaches it. Those two look identical in a diff and have different lifetimes.
 - **`getSystemSchema` is not in this cluster** (109 lines, no graph edges, pure
   static data) and sits physically inside the region the last four cluster members
   occupy. It stayed.
 
-### Stage 3 — Actor CRUD, safe sub-clusters only → `actor-crud.ts`
+### Stage 3 — Actor CRUD (cluster C) → `actor-crud.ts` — ✅ **LANDED** as `extract-actor-crud`
 
-Actor CRUD (cluster C) is **heterogeneous** — do not treat it as one
-atomic stage. Four sub-stages by ascending risk:
+**Read the four struck claims below before planning anything from this section.** One of
+them — the C → A dependency — is the premise this document's whole staging order was
+built on, and it was true only of dead code.
 
-- **3a (near-zero risk)**: `updateActors`, `updateActorItems`,
-  `deleteActorItems`, `deleteActors`. **Zero `this.x()` calls of any kind** —
-  they touch only `game.actors`/embedded-document APIs. No rewrite needed at
-  all beyond the `class` boundary. Move first, as a confidence-builder.
+Landed as **five commits inside one OpenSpec change** (a deletion plus four move
+stages), not as four changes: the stages share one module boundary, so splitting them
+across changes would either restate the ownership requirement four times or let the
+later stages land as implementations of a delta written for the first. The staging shape
+below was right; four of its specifics were wrong, and each is struck in place because
+each is the kind of claim a later reader would act on.
+
+Result: 20 cluster members / 2,092 body lines, of which **16 moved (1,511)**, **two were
+deleted rather than moved (191)** and **two stayed (390)**. 34 re-pointings of five
+shapes. `data-access.ts` 4,271 → ~2,620.
+
+- **3a (near-zero risk)**: `updateActors`, `updateActorItems`, `deleteActorItems`,
+  `deleteActors`. **Zero `this.x()` calls of any kind** — they touch only
+  `game.actors`/embedded-document APIs. Correct, and it became **stage A**: the commit
+  that establishes the file, the class, the constructor and the wiring, chosen to go
+  first precisely _because_ it carries zero re-pointings, so a wiring mistake fails
+  alone rather than inside a diff carrying 34 substitutions.
 - **3b (low risk, mechanical)**: `setActorOwnership`, `updateWfrp4eActor`,
-  `addWfrp4eItems`, `getActorOwnership`. Same three-call rewrite pattern as
-  cluster D (`security`/`actor-resolver` only).
-- **3c (low-medium risk)**: `createNpcActor`, `createActors`,
-  `normalizeMGT2eSkillKeys` (private, moves with `createActors`, its only
-  caller), `getSystemSchema` (no calls at all, pure static reference data —
-  can go anywhere, put it here). Uses `this.getOrCreateFolder` (already an
-  `actor-resolver` wrapper, low-risk rewrite). **Carries the `createNpcActor`
-  soft-validation comment** (see load-bearing comments).
-- **3d (medium-high risk, depends on stage 2 being done)**:
-  `createActorFromCompendium`, `createActorFromCompendiumEntry`,
-  `createActorFromSource`, `addActorsToScene`, `calculateTokenPosition`.
-  Requires stage 2's `compendiumSearch` collaborator to exist first (the
-  cross-cluster call). `addActorsToScene` also touches the module-level
-  `permissionManager`/`ERROR_MESSAGES` imports directly — carry those
-  imports into the new file, they are not `this.` state.
-- **What could break, all of 3a–3d**: the standard rewrite-miss-is-a-compile-error
-  safety net applies throughout. The specific new risk in 3d is the
-  cross-collaborator call (`this.compendiumSearch.x()`) — get the
-  constructor-injection order right (`compendiumSearch` must be constructed
-  before `actor-crud`'s collaborator instance, mirroring the "later fields'
-  initializers reference earlier ones" rule already in force for the 8
-  existing fields).
-- **Collision risk with the concurrent change**: none for 3a/3b/3c/3d as
-  scoped above — none of these line ranges have live diff hunks.
+  `addWfrp4eItems`, `getActorOwnership`. ~~Same three-call rewrite pattern as cluster
+  D~~ — **wrong for two of the four, and the count matters because it is what a counted
+  substitution is checked against.** `updateWfrp4eActor` and `addWfrp4eItems` do make
+  all four calls. `getActorOwnership` makes **two** (`validateFoundryState`,
+  `findActorByIdentifier` — **no audit call at all**, on a read path).
+  `setActorOwnership` makes **one** (`validateFoundryState` only — **no audit call on a
+  write path**). That last asymmetry was moved verbatim and pinned as observed: adding
+  the audit call would be a behaviour change smuggled into a relocation.
+- **3c (low-medium risk)**: `createNpcActor`, `createActors`, `normalizeMGT2eSkillKeys`
+  (private, moves with `createActors`, its only caller) — all correct. ~~`getSystemSchema`
+  (no calls at all, pure static reference data — can go anywhere, put it here)~~ —
+  **wrong, and it is a decision rather than a detail.** `getSystemSchema` creates
+  nothing, updates nothing, deletes nothing and touches no actor; it is **not actor
+  CRUD**, and "can go anywhere" is not the same as "belongs anywhere". Putting it in
+  `actor-crud.ts` because a convenient stage was passing would give that module a
+  concern it does not own. It **stayed on the facade**, recorded as a residual with its
+  reason, and `extract-actor-crud` added a requirement stating the exclusion because
+  three separate documents have now proposed three different homes for it. Its home is
+  stage 4's decision to argue on the merits.
+  **Also missing from this sub-stage's list: the seven module-level `NPC_*`/`npc*`
+  bindings.** One of them, `NPC_SKILL_MAP`, has **zero** class-member references — it is
+  read only by `npcBuildSkillsBlock`, itself module-level — so the travelling set has to
+  be a **transitive** closure over top-level declarations, not the answer to "which
+  names do the moved bodies mention?". A one-hop query breaks the build in the new file.
+- **3d (medium-high risk, depends on stage 2 being done)**: ~~`createActorFromCompendium`~~
+  (**deleted — dead surface**), `createActorFromCompendiumEntry`,
+  ~~`createActorFromSource`~~ (**deleted — dead by cascade**), `addActorsToScene`,
+  `calculateTokenPosition`. ~~Requires stage 2's `compendiumSearch` collaborator to exist
+  first (the cross-cluster call).~~ — **it requires nothing from stage 2**: both
+  cross-cluster calls were inside the deleted method. `addActorsToScene` does read the
+  module-level `ERROR_MESSAGES` import (carried into the new file, correct) but **not**
+  `permissionManager`: it reads the facade's injected `this.permissions` **field**, which
+  is a different thing and is handled by giving the collaborator a same-named injected
+  field so the two reads move with zero diff. And the item this plan does not mention at
+  all: **two bare `transactionManager.` module-level identifier uses**, which became
+  `this.transactionManager.` — a third shape of permitted difference, and the reason the
+  singleton export had to go.
+  Also **`CreatedActorInfo`**: after the deletion it has zero class-member references and
+  survives only as the element type inside `ActorCreationResult`'s declaration — the same
+  two-hop relationship as `NPC_SKILL_MAP`, seen from the other side, and the reason it
+  travels but is **not** imported back.
+- **What could break, all of 3a–3d**: the rewrite-miss-is-a-compile-error safety net
+  applied throughout and caught nothing, because the assembly was mechanical (every
+  member sliced from a hashed byte copy of `data-access.ts`, every re-pointing a counted
+  substitution that aborts on a wrong count). ~~The specific new risk in 3d is the
+  cross-collaborator call (`this.compendiumSearch.x()`)~~ — **there is no such call.**
+  The real gate was the per-member body diff: 25 of 27 moved items byte-identical, two
+  differing only by a prettier reflow the pre-substitution column measurement predicted.
+- **Collision risk with the concurrent change**: moot — that change landed long before.
 
 ### Stage 4 — Character reading (cluster B + B′) → `character-reader.ts` — **defer, don't run yet**
 
@@ -361,8 +438,12 @@ atomic stage. Four sub-stages by ascending risk:
 
 ### Stage 5 (optional, last, or never) — `importActors` and the rest of actor CRUD's tail
 
-See the risk-ranking section below — this is `importActors` specifically,
-not the rest of cluster C (already handled in stage 3).
+See the risk-ranking section below — this is `importActors` specifically, not the rest
+of cluster C (handled by `extract-actor-crud`). The verdict is now **permanent
+deferral**, restated as a requirement, and it has a consequence later passes are bound
+by: `importActors` is the **only** remaining caller of the facade's private
+`getOrCreateFolder` wrapper, so that wrapper is permanent and must not be deleted on the
+reasoning that the cluster which used it has moved.
 
 ## The compatibility boundary
 
@@ -440,13 +521,13 @@ All line numbers in this section predate stage 1 and are stale by roughly
 
 Lowest to highest:
 
-1. **Stage 3a** (`updateActors`/`updateActorItems`/`deleteActorItems`/`deleteActors`) — no `this.x()` calls, no tests, but nothing to get wrong either.
+1. **Stage 3a** (`updateActors`/`updateActorItems`/`deleteActorItems`/`deleteActors`) — ✅ landed as `extract-actor-crud`'s **stage A**. No `this.x()` calls, and — the reason it went first within that pass, beyond confidence-building — it is the commit that establishes the file, class, constructor and wiring, so it does that with **zero** re-pointings and a wiring mistake fails alone.
 2. **Stage 1** (actor-mechanics builders, cluster D) — mechanical, repetitive, zero cross-cluster edges, no tests; risk is transcription error in long method bodies, not architecture.
-3. **Stage 3b** (`setActorOwnership`/`updateWfrp4eActor`/`addWfrp4eItems`/`getActorOwnership`) — same shape as stage 1.
+3. **Stage 3b** (`setActorOwnership`/`updateWfrp4eActor`/`addWfrp4eItems`/`getActorOwnership`) — ✅ landed. ~~Same shape as stage 1.~~ Two of the four are not: `getActorOwnership` makes two calls and `setActorOwnership` one, and **neither audits**. 19 re-pointings in that commit, not the 23 the task list derived from this claim.
 4. **Stage 2** (compendium search, cluster A) — ✅ landed. Internally more complex (a three-member recursive cycle, 5-way system dispatch), but self-contained. The predicted risk — "the two facade wrapper methods it must leave behind for cluster C" — was mis-stated: only **one** wrapper is a cluster-C bridge (`findBestCompendiumMatch`, private, temporary), while `getCompendiumDocumentFull`'s delegation is permanent because `queries.ts` reaches it independently. The realised risk was elsewhere: five re-pointings against 864 moved body lines left `tsc` with almost nothing to catch.
-5. **Stage 3c** (`createNpcActor`/`createActors`) — pulls in the `createNpcActor` soft-validation comment; low-medium.
-6. **Stage 3d** (compendium-backed actor creation) — depends on stage 2 existing; medium, because a wiring mistake in the new cross-collaborator call would surface as "actor creation from compendium silently fails to find a match," which has no test coverage to catch it.
-7. **Stage 4** (character reading) — code-risk is actually moderate-low (best test coverage in the file besides `importActors`), but **currently has the highest _process_ risk** because it's mid-edit by someone else. Not a code problem, a sequencing problem.
+5. **Stage 3c** (`createNpcActor`/`createActors`) — ✅ landed. Pulled in the `createNpcActor` soft-validation comment, verbatim, plus **seven** module-level `NPC_*`/`npc*` bindings this plan does not list — one of which (`NPC_SKILL_MAP`) no moved body references at all. Not `getSystemSchema`: see the stage 3 section.
+6. **Stage 3d** (compendium-backed actor creation) — ✅ landed. ~~Depends on stage 2 existing; medium, because a wiring mistake in the new cross-collaborator call would surface as "actor creation from compendium silently fails to find a match"~~ — **there is no cross-collaborator call.** Both were inside `createActorFromCompendium`, which was dead surface and was deleted. The real content of that commit turned out to be the `PermissionManager` and `TransactionManager` injections, the removal of `transaction-manager.ts`'s singleton export, and the four travelling type declarations.
+7. **Stage 4** (character reading) — **the only stage left.** — code-risk is actually moderate-low (best test coverage in the file besides `importActors`), but **currently has the highest _process_ risk** because it's mid-edit by someone else. Not a code problem, a sequencing problem.
 8. **`importActors` — the highest-risk single method in the file, called out on its own.**
 
 **Verdict on `importActors`: leave it as the permanent facade tail. Do not
@@ -567,16 +648,13 @@ reports 45), because the in-flight WoD-read-path change just added
    body diff is the only guard, which is a reason not to "tidy" an apparently
    dead scoring branch while moving it.
 
-3. **A `createActorFromCompendium` test asserting the compendium-search
-   cross-call** before stage 3d specifically — this is the one place a
-   collaborator-wiring mistake (wrong constructor order, or forgetting the
-   `this.findBestCompendiumMatch` → `this.compendiumSearch.findBestCompendiumMatch`
-   rewrite) would silently degrade "create actor from compendium" into
-   always failing to find a match, with nothing to catch it. **Still pending**,
-   and still worth it after stage 2: stage 2 left that call going through a
-   temporary private facade wrapper, so the rewrite has simply moved from
-   "forget it and break the build" to "forget it and leave a wrapper that
-   should have been deleted".
+3. ~~**A `createActorFromCompendium` test asserting the compendium-search
+   cross-call** before stage 3d specifically~~ — **moot, and instructively so.**
+   There was nothing to test: `createActorFromCompendium` was dead surface and was
+   deleted, so the cross-call it was supposed to protect never existed at runtime. A
+   test written for it would have pinned code nothing could reach. What stage 3
+   **did** need, and got as `3cbe106`, was 155 characterization cases over the
+   fourteen reachable actor-CRUD members, proven against 98 mutations.
 4. Do **not** invest in new tests for `importActors` beyond what's already
    there — it's already the best-covered method in the file, and (per the
    verdict above) the plan is to leave it untouched anyway.
@@ -592,10 +670,13 @@ lowest-hanging, highest-line-count, zero-coverage stage in this whole plan.
 Beyond the `importActors` verdict above: the 43 already-thin facade wrapper
 methods (delegates to the first pass's 8 collaborators) need no further
 work — they're already single-line delegates and touching them again would
-be motion without value. And `getSystemSchema` (zero calls, pure static
-data) can go into whichever file is convenient in stage 3 without needing
-its own analysis — it's the one method in this whole plan with no graph
-edges in or out at all.
+be motion without value. ~~And `getSystemSchema` (zero calls, pure static data) can go into whichever file is
+convenient in stage 3 without needing its own analysis~~ — **struck.** It is true that
+it has no graph edges in or out; it does not follow that it can go anywhere. It is not
+actor CRUD, `extract-actor-crud` left it on the facade as a recorded residual, and the
+ownership requirement that pass added states the exclusion as a requirement, because
+"can go anywhere" had by then been read as "put it in the file a stage is already
+touching" in three documents. Stage 4 decides its home on the merits.
 
 ## Methodology (how every number above was produced)
 
