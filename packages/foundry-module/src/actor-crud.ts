@@ -37,26 +37,207 @@
 // anyway — removing a parameter from a public signature is a boundary change and a
 // recorded follow-up, not part of a relocation.
 
-import { MODULE_ID } from './constants.js';
+import { MODULE_ID, ERROR_MESSAGES } from './constants.js';
 import { FoundrySecurity } from './security.js';
 import { ActorResolver } from './actor-resolver.js';
 import { PermissionManager } from './permissions.js';
 import { TransactionManager } from './transaction-manager.js';
 
+export interface ActorCreationResult {
+  success: boolean;
+  actors: CreatedActorInfo[];
+  errors?: string[] | undefined;
+  tokensPlaced?: number;
+  totalRequested: number;
+  totalCreated: number;
+}
+
+interface CreatedActorInfo {
+  id: string;
+  name: string;
+  originalName: string;
+  type: string;
+  sourcePackId: string;
+  sourcePackLabel: string;
+  img?: string;
+}
+
+export interface SceneTokenPlacement {
+  actorIds: string[];
+  placement: 'random' | 'grid' | 'center' | 'coordinates';
+  hidden: boolean;
+  coordinates?: { x: number; y: number }[];
+}
+
+export interface TokenPlacementResult {
+  success: boolean;
+  tokensCreated: number;
+  tokenIds: string[];
+  errors?: string[] | undefined;
+}
+
 export class ActorCrud {
-  // Staging note, gone by the last commit of this pass: a `private` field TypeScript
-  // never reads is a TS6138 error under noUnusedLocals, and this extraction lands in
-  // five commits. Each dependency is therefore `protected` until the stage that first
-  // reads it, which is where it becomes `private`. The constructor's arity, parameter
-  // order, parameter names and types never change, so no construction site is edited
-  // more than once.
+  private moduleId: string = MODULE_ID;
 
   constructor(
     private security: FoundrySecurity,
     private actorResolver: ActorResolver,
-    protected permissions: PermissionManager,
-    protected transactionManager: TransactionManager
+    private permissions: PermissionManager,
+    private transactionManager: TransactionManager
   ) {}
+
+  /**
+   * Create actor from specific compendium entry using pack/item IDs
+   */
+  async createActorFromCompendiumEntry(request: {
+    packId: string;
+    itemId: string;
+    customNames: string[];
+    quantity?: number;
+    addToScene?: boolean;
+    placement?: {
+      type: 'random' | 'grid' | 'center' | 'coordinates';
+      coordinates?: { x: number; y: number }[];
+    };
+  }): Promise<ActorCreationResult> {
+    this.security.validateFoundryState();
+
+    try {
+      const { packId, itemId, customNames, quantity = 1, addToScene = false, placement } = request;
+
+      // Validate inputs
+      if (!packId || !itemId) {
+        throw new Error('Both packId and itemId are required');
+      }
+
+      // Get the pack
+      const pack = game.packs.get(packId);
+      if (!pack) {
+        throw new Error(`Compendium pack "${packId}" not found`);
+      }
+
+      // Get the specific document
+      const sourceDocument = await pack.getDocument(itemId);
+      if (!sourceDocument) {
+        throw new Error(`Document "${itemId}" not found in pack "${packId}"`);
+      }
+
+      // Validate that the document is an Actor (supports character, npc, creature, etc.)
+      if (sourceDocument.documentName !== 'Actor') {
+        throw new Error(
+          `Document "${itemId}" is not an Actor (documentName: ${sourceDocument.documentName}, type: ${sourceDocument.type})`
+        );
+      }
+
+      // Validate actor type - support all common actor types including DSA5 creatures
+      // and Cosmere RPG adversaries.
+      const validActorTypes = ['character', 'npc', 'creature', 'adversary'];
+      if (!validActorTypes.includes(sourceDocument.type)) {
+        throw new Error(
+          `Document "${itemId}" has unsupported actor type: ${sourceDocument.type}. Supported types: ${validActorTypes.join(', ')}`
+        );
+      }
+
+      const sourceActor = sourceDocument as Actor;
+
+      // Prepare custom names
+      const names = customNames.length > 0 ? customNames : [`${sourceActor.name} Copy`];
+      const finalQuantity = Math.min(quantity, names.length);
+
+      const createdActors: any[] = [];
+      const errors: string[] = [];
+
+      // Create actors
+      for (let i = 0; i < finalQuantity; i++) {
+        try {
+          const customName = names[i] || `${sourceActor.name} ${i + 1}`;
+
+          // Create actor data with full system, items, and effects
+          const sourceData = sourceActor.toObject() as any;
+          const actorData = {
+            name: customName,
+            type: sourceData.type,
+            img: sourceData.img,
+            system: sourceData.system || sourceData.data || {},
+            items: sourceData.items || [],
+            effects: sourceData.effects || [],
+            folder: null, // Don't inherit folder
+            prototypeToken: sourceData.prototypeToken, // Include prototype token
+          };
+
+          // Fix remote image URLs - normalize to local paths
+          if (actorData.prototypeToken?.texture?.src?.startsWith('http')) {
+            actorData.prototypeToken.texture.src = null; // Clear remote URL
+          }
+
+          // Organize created actors in a folder - use "Foundry MCP Creatures" for generic monsters
+          const folderId = await this.actorResolver.getOrCreateFolder(
+            'Foundry MCP Creatures',
+            'Actor'
+          );
+          if (folderId) {
+            (actorData as any).folder = folderId;
+          }
+
+          // Create the actor
+          const newActor = await Actor.create(actorData);
+          if (!newActor) {
+            throw new Error(`Failed to create actor "${customName}"`);
+          }
+
+          createdActors.push({
+            id: newActor.id,
+            name: newActor.name,
+            originalName: sourceActor.name,
+            sourcePackLabel: pack.metadata.label,
+          });
+        } catch (error) {
+          const errorMsg = `Failed to create actor ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          errors.push(errorMsg);
+          console.error(`[${MODULE_ID}] ${errorMsg}`, error);
+        }
+      }
+
+      // Add to scene if requested
+      let tokensPlaced = 0;
+      if (addToScene && createdActors.length > 0) {
+        try {
+          const sceneResult = await this.addActorsToScene({
+            actorIds: createdActors.map(a => a.id),
+            placement: placement?.type || 'grid',
+            hidden: false,
+            ...(placement?.coordinates && { coordinates: placement.coordinates }),
+          });
+          tokensPlaced = sceneResult.success ? sceneResult.tokensCreated : 0;
+        } catch (error) {
+          errors.push(
+            `Failed to add actors to scene: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+        }
+      }
+
+      const result: ActorCreationResult = {
+        success: createdActors.length > 0,
+        totalCreated: createdActors.length,
+        totalRequested: finalQuantity,
+        actors: createdActors,
+        tokensPlaced,
+        errors: errors.length > 0 ? errors : undefined,
+      };
+
+      this.security.auditLog('createActorFromCompendiumEntry', request, 'success');
+      return result;
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to create actor from compendium entry`, error);
+      this.security.auditLog(
+        'createActorFromCompendiumEntry',
+        request,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
 
   /**
    * Add one or more freshly-authored Item documents to an existing Actor.
@@ -245,6 +426,158 @@ export class ActorCrud {
         error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
+    }
+  }
+
+  /**
+   * Add actors to the current scene as tokens
+   */
+  async addActorsToScene(
+    placement: SceneTokenPlacement,
+    transactionId?: string
+  ): Promise<TokenPlacementResult> {
+    this.security.validateFoundryState();
+
+    // Use new permission system
+    const permissionCheck = this.permissions.checkWritePermission('modifyScene', {
+      targetIds: placement.actorIds,
+    });
+
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    // Audit the permission check
+    this.permissions.auditPermissionCheck('modifyScene', permissionCheck, placement);
+
+    const scene = (game.scenes as any).current;
+    if (!scene) {
+      throw new Error('No active scene found');
+    }
+
+    this.security.auditLog('addActorsToScene', placement, 'success');
+
+    try {
+      const tokenData: any[] = [];
+      const errors: string[] = [];
+
+      for (const actorId of placement.actorIds) {
+        try {
+          const actor = game.actors.get(actorId);
+          if (!actor) {
+            errors.push(`Actor ${actorId} not found`);
+            continue;
+          }
+
+          const tokenDoc = (actor as any).prototypeToken.toObject();
+          const position = this.calculateTokenPosition(
+            placement.placement,
+            scene,
+            tokenData.length,
+            placement.coordinates
+          );
+
+          // Fix token texture if it's still a remote URL (Foundry may have overridden our actor creation fix)
+          if (tokenDoc.texture?.src?.startsWith('http')) {
+            console.error(
+              `[${this.moduleId}] Token texture still has remote URL, clearing: ${tokenDoc.texture.src}`
+            );
+            tokenDoc.texture.src = null; // Use Foundry's fallback
+          } else {
+          }
+
+          tokenData.push({
+            ...tokenDoc,
+            x: position.x,
+            y: position.y,
+            actorId,
+            hidden: placement.hidden,
+          });
+        } catch (error) {
+          errors.push(
+            `Failed to prepare token for actor ${actorId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+        }
+      }
+
+      const createdTokens = await scene.createEmbeddedDocuments('Token', tokenData);
+
+      // Track token creation for rollback if transaction is active
+      if (transactionId && createdTokens.length > 0) {
+        for (const token of createdTokens) {
+          this.transactionManager.addAction(
+            transactionId,
+            this.transactionManager.createTokenCreationAction(token.id)
+          );
+        }
+      }
+
+      const result: TokenPlacementResult = {
+        success: createdTokens.length > 0,
+        tokensCreated: createdTokens.length,
+        tokenIds: createdTokens.map((token: any) => token.id),
+        ...(errors.length > 0 ? { errors } : {}),
+      };
+
+      this.security.auditLog('addActorsToScene', placement, 'success');
+      return result;
+    } catch (error) {
+      this.security.auditLog(
+        'addActorsToScene',
+        placement,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Calculate token position based on placement strategy
+   */
+  private calculateTokenPosition(
+    placement: 'random' | 'grid' | 'center' | 'coordinates',
+    scene: any,
+    index: number,
+    coordinates?: { x: number; y: number }[]
+  ): { x: number; y: number } {
+    const gridSize = scene.grid?.size || 100;
+
+    switch (placement) {
+      case 'coordinates':
+        if (coordinates?.[index]) {
+          return coordinates[index];
+        }
+        // Fallback to grid if coordinates not provided or insufficient
+        const fallbackCols = Math.ceil(Math.sqrt(index + 1));
+        const fallbackRow = Math.floor(index / fallbackCols);
+        const fallbackCol = index % fallbackCols;
+        return {
+          x: gridSize + fallbackCol * gridSize * 2,
+          y: gridSize + fallbackRow * gridSize * 2,
+        };
+
+      case 'center':
+        return {
+          x: scene.width / 2 + index * gridSize,
+          y: scene.height / 2,
+        };
+
+      case 'grid':
+        const cols = Math.ceil(Math.sqrt(index + 1));
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        return {
+          x: gridSize + col * gridSize * 2,
+          y: gridSize + row * gridSize * 2,
+        };
+
+      case 'random':
+      default:
+        return {
+          x: Math.random() * (scene.width - gridSize),
+          y: Math.random() * (scene.height - gridSize),
+        };
     }
   }
 

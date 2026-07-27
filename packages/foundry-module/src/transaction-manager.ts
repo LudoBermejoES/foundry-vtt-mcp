@@ -263,5 +263,10 @@ export class TransactionManager {
   }
 }
 
-// Export singleton instance
-export const transactionManager = new TransactionManager();
+// NO module-level instance is exported. This class is a STATEFUL shared service — it owns
+// `activeTransactions` and `transactionHistory` — so instance identity is load-bearing, not
+// merely hygienic: two instances genuinely diverge. FoundryDataAccess constructs the one
+// instance and injects it into ActorCrud, which is the only consumer. Re-adding
+// `export const transactionManager = new TransactionManager()` would let a collaborator
+// reach the service by import again, which is the invisible equivalence the acyclic-DAG
+// requirement removes the export to make a compile error.

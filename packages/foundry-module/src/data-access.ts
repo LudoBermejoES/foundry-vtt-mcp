@@ -1,6 +1,6 @@
 import { MODULE_ID, ERROR_MESSAGES } from './constants.js';
 import { PermissionManager } from './permissions.js';
-import { transactionManager, TransactionManager } from './transaction-manager.js';
+import { TransactionManager } from './transaction-manager.js';
 import { PersistentCreatureIndex } from './creature-index.js';
 import { FoundrySecurity } from './security.js';
 import { ActorResolver } from './actor-resolver.js';
@@ -10,7 +10,16 @@ import { ActorDirectory } from './actor-directory.js';
 import { RollManager } from './roll-manager.js';
 import { SceneTokenManager } from './scene-token-manager.js';
 import { ActorMechanics } from './actor-mechanics.js';
-import { ActorCrud } from './actor-crud.js';
+// The three types the retained delegations name. `CreatedActorInfo` is deliberately NOT
+// imported: it is referenced only from inside `ActorCreationResult`'s own declaration, so
+// importing it would be an unused import under noUnusedLocals — the same asymmetry pass
+// 5.1 met with CompendiumItem/CompendiumEffect, seen from the other side.
+import {
+  ActorCrud,
+  ActorCreationResult,
+  SceneTokenPlacement,
+  TokenPlacementResult,
+} from './actor-crud.js';
 import {
   CompendiumSearch,
   CompendiumEntryFull,
@@ -141,40 +150,6 @@ interface WorldUser {
   name: string;
   active: boolean;
   isGM: boolean;
-}
-
-// Phase 2: Write Operation Interfaces
-interface ActorCreationResult {
-  success: boolean;
-  actors: CreatedActorInfo[];
-  errors?: string[] | undefined;
-  tokensPlaced?: number;
-  totalRequested: number;
-  totalCreated: number;
-}
-
-interface CreatedActorInfo {
-  id: string;
-  name: string;
-  originalName: string;
-  type: string;
-  sourcePackId: string;
-  sourcePackLabel: string;
-  img?: string;
-}
-
-interface SceneTokenPlacement {
-  actorIds: string[];
-  placement: 'random' | 'grid' | 'center' | 'coordinates';
-  hidden: boolean;
-  coordinates?: { x: number; y: number }[];
-}
-
-interface TokenPlacementResult {
-  success: boolean;
-  tokensCreated: number;
-  tokenIds: string[];
-  errors?: string[] | undefined;
 }
 
 export class FoundryDataAccess {
@@ -1393,6 +1368,10 @@ export class FoundryDataAccess {
 
   /**
    * Sanitize data to remove sensitive information and make it JSON-safe
+   *
+   * TEMPORARY BRIDGE, not a boundary member. Untouched by the actor-CRUD extraction — that
+   * cluster sanitises nothing, so this wrapper is entirely the character-reading cluster's:
+   * `getCharacterInfo` x2, `readActorFlags`, `extractTokenArt` x2. Expires with pass 5.2.
    */
   private sanitizeData(data: any): any {
     return this.security.sanitizeData(data);
@@ -1400,6 +1379,10 @@ export class FoundryDataAccess {
 
   /**
    * Validate that Foundry is ready and world is active
+   *
+   * PERMANENT. It is a boundary member — queries.ts reaches it directly in many places —
+   * so it survives regardless of who calls it inside the class (currently
+   * `searchCharacterItems`, cluster B).
    */
   validateFoundryState(): void {
     return this.security.validateFoundryState();
@@ -1407,6 +1390,12 @@ export class FoundryDataAccess {
 
   /**
    * Audit log for write operations
+   *
+   * TEMPORARY BRIDGE, not a boundary member. Nothing outside the class reaches it. After
+   * the actor-CRUD extraction its ONLY remaining caller is `searchCharacterItems` (:633),
+   * which belongs to the character-reading cluster — so it expires with pass 5.2 and MUST
+   * NOT be deleted before then. Dropping from fifteen callers to one is not evidence of
+   * expiry; the remaining caller is.
    */
   private auditLog(
     operation: string,
@@ -1486,6 +1475,8 @@ export class FoundryDataAccess {
 
   /**
    * Create actor from specific compendium entry using pack/item IDs
+   *
+   * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async createActorFromCompendiumEntry(request: {
     packId: string;
@@ -1498,140 +1489,7 @@ export class FoundryDataAccess {
       coordinates?: { x: number; y: number }[];
     };
   }): Promise<ActorCreationResult> {
-    this.validateFoundryState();
-
-    try {
-      const { packId, itemId, customNames, quantity = 1, addToScene = false, placement } = request;
-
-      // Validate inputs
-      if (!packId || !itemId) {
-        throw new Error('Both packId and itemId are required');
-      }
-
-      // Get the pack
-      const pack = game.packs.get(packId);
-      if (!pack) {
-        throw new Error(`Compendium pack "${packId}" not found`);
-      }
-
-      // Get the specific document
-      const sourceDocument = await pack.getDocument(itemId);
-      if (!sourceDocument) {
-        throw new Error(`Document "${itemId}" not found in pack "${packId}"`);
-      }
-
-      // Validate that the document is an Actor (supports character, npc, creature, etc.)
-      if (sourceDocument.documentName !== 'Actor') {
-        throw new Error(
-          `Document "${itemId}" is not an Actor (documentName: ${sourceDocument.documentName}, type: ${sourceDocument.type})`
-        );
-      }
-
-      // Validate actor type - support all common actor types including DSA5 creatures
-      // and Cosmere RPG adversaries.
-      const validActorTypes = ['character', 'npc', 'creature', 'adversary'];
-      if (!validActorTypes.includes(sourceDocument.type)) {
-        throw new Error(
-          `Document "${itemId}" has unsupported actor type: ${sourceDocument.type}. Supported types: ${validActorTypes.join(', ')}`
-        );
-      }
-
-      const sourceActor = sourceDocument as Actor;
-
-      // Prepare custom names
-      const names = customNames.length > 0 ? customNames : [`${sourceActor.name} Copy`];
-      const finalQuantity = Math.min(quantity, names.length);
-
-      const createdActors: any[] = [];
-      const errors: string[] = [];
-
-      // Create actors
-      for (let i = 0; i < finalQuantity; i++) {
-        try {
-          const customName = names[i] || `${sourceActor.name} ${i + 1}`;
-
-          // Create actor data with full system, items, and effects
-          const sourceData = sourceActor.toObject() as any;
-          const actorData = {
-            name: customName,
-            type: sourceData.type,
-            img: sourceData.img,
-            system: sourceData.system || sourceData.data || {},
-            items: sourceData.items || [],
-            effects: sourceData.effects || [],
-            folder: null, // Don't inherit folder
-            prototypeToken: sourceData.prototypeToken, // Include prototype token
-          };
-
-          // Fix remote image URLs - normalize to local paths
-          if (actorData.prototypeToken?.texture?.src?.startsWith('http')) {
-            actorData.prototypeToken.texture.src = null; // Clear remote URL
-          }
-
-          // Organize created actors in a folder - use "Foundry MCP Creatures" for generic monsters
-          const folderId = await this.getOrCreateFolder('Foundry MCP Creatures', 'Actor');
-          if (folderId) {
-            (actorData as any).folder = folderId;
-          }
-
-          // Create the actor
-          const newActor = await Actor.create(actorData);
-          if (!newActor) {
-            throw new Error(`Failed to create actor "${customName}"`);
-          }
-
-          createdActors.push({
-            id: newActor.id,
-            name: newActor.name,
-            originalName: sourceActor.name,
-            sourcePackLabel: pack.metadata.label,
-          });
-        } catch (error) {
-          const errorMsg = `Failed to create actor ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`;
-          errors.push(errorMsg);
-          console.error(`[${MODULE_ID}] ${errorMsg}`, error);
-        }
-      }
-
-      // Add to scene if requested
-      let tokensPlaced = 0;
-      if (addToScene && createdActors.length > 0) {
-        try {
-          const sceneResult = await this.addActorsToScene({
-            actorIds: createdActors.map(a => a.id),
-            placement: placement?.type || 'grid',
-            hidden: false,
-            ...(placement?.coordinates && { coordinates: placement.coordinates }),
-          });
-          tokensPlaced = sceneResult.success ? sceneResult.tokensCreated : 0;
-        } catch (error) {
-          errors.push(
-            `Failed to add actors to scene: ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
-        }
-      }
-
-      const result: ActorCreationResult = {
-        success: createdActors.length > 0,
-        totalCreated: createdActors.length,
-        totalRequested: finalQuantity,
-        actors: createdActors,
-        tokensPlaced,
-        errors: errors.length > 0 ? errors : undefined,
-      };
-
-      this.auditLog('createActorFromCompendiumEntry', request, 'success');
-      return result;
-    } catch (error) {
-      console.error(`[${MODULE_ID}] Failed to create actor from compendium entry`, error);
-      this.auditLog(
-        'createActorFromCompendiumEntry',
-        request,
-        'failure',
-        error instanceof Error ? error.message : 'Unknown error'
-      );
-      throw error;
-    }
+    return this.actorCrud.createActorFromCompendiumEntry(request);
   }
 
   /**
@@ -1757,6 +1615,12 @@ export class FoundryDataAccess {
    * Get system-specific enum/schema information for the current game system.
    * Returns valid values for enumerated fields so the LLM can use correct keys
    * when creating or updating items/actors (e.g. weapon.traits in mgt2e).
+   *
+   * RESIDUAL, not yet extracted, and deliberately NOT part of the actor-CRUD cluster: it
+   * creates nothing, updates nothing, deletes nothing, touches no actor, and has zero
+   * call-graph edges in either direction. "It has no edges, so it can go anywhere" is not
+   * a reason to give a module a concern it does not own. Recorded with its reason in
+   * docs/refactor-data-access.md; its home is pass 5.2's decision to argue on the merits.
    */
   getSystemSchema(): Record<string, any> {
     const systemId = (game as any).system?.id ?? 'unknown';
@@ -1884,154 +1748,14 @@ export class FoundryDataAccess {
 
   /**
    * Add actors to the current scene as tokens
+   *
+   * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async addActorsToScene(
     placement: SceneTokenPlacement,
     transactionId?: string
   ): Promise<TokenPlacementResult> {
-    this.validateFoundryState();
-
-    // Use new permission system
-    const permissionCheck = this.permissions.checkWritePermission('modifyScene', {
-      targetIds: placement.actorIds,
-    });
-
-    if (!permissionCheck.allowed) {
-      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
-    }
-
-    // Audit the permission check
-    this.permissions.auditPermissionCheck('modifyScene', permissionCheck, placement);
-
-    const scene = (game.scenes as any).current;
-    if (!scene) {
-      throw new Error('No active scene found');
-    }
-
-    this.auditLog('addActorsToScene', placement, 'success');
-
-    try {
-      const tokenData: any[] = [];
-      const errors: string[] = [];
-
-      for (const actorId of placement.actorIds) {
-        try {
-          const actor = game.actors.get(actorId);
-          if (!actor) {
-            errors.push(`Actor ${actorId} not found`);
-            continue;
-          }
-
-          const tokenDoc = (actor as any).prototypeToken.toObject();
-          const position = this.calculateTokenPosition(
-            placement.placement,
-            scene,
-            tokenData.length,
-            placement.coordinates
-          );
-
-          // Fix token texture if it's still a remote URL (Foundry may have overridden our actor creation fix)
-          if (tokenDoc.texture?.src?.startsWith('http')) {
-            console.error(
-              `[${this.moduleId}] Token texture still has remote URL, clearing: ${tokenDoc.texture.src}`
-            );
-            tokenDoc.texture.src = null; // Use Foundry's fallback
-          } else {
-          }
-
-          tokenData.push({
-            ...tokenDoc,
-            x: position.x,
-            y: position.y,
-            actorId,
-            hidden: placement.hidden,
-          });
-        } catch (error) {
-          errors.push(
-            `Failed to prepare token for actor ${actorId}: ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
-        }
-      }
-
-      const createdTokens = await scene.createEmbeddedDocuments('Token', tokenData);
-
-      // Track token creation for rollback if transaction is active
-      if (transactionId && createdTokens.length > 0) {
-        for (const token of createdTokens) {
-          transactionManager.addAction(
-            transactionId,
-            transactionManager.createTokenCreationAction(token.id)
-          );
-        }
-      }
-
-      const result: TokenPlacementResult = {
-        success: createdTokens.length > 0,
-        tokensCreated: createdTokens.length,
-        tokenIds: createdTokens.map((token: any) => token.id),
-        ...(errors.length > 0 ? { errors } : {}),
-      };
-
-      this.auditLog('addActorsToScene', placement, 'success');
-      return result;
-    } catch (error) {
-      this.auditLog(
-        'addActorsToScene',
-        placement,
-        'failure',
-        error instanceof Error ? error.message : 'Unknown error'
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Calculate token position based on placement strategy
-   */
-  private calculateTokenPosition(
-    placement: 'random' | 'grid' | 'center' | 'coordinates',
-    scene: any,
-    index: number,
-    coordinates?: { x: number; y: number }[]
-  ): { x: number; y: number } {
-    const gridSize = scene.grid?.size || 100;
-
-    switch (placement) {
-      case 'coordinates':
-        if (coordinates?.[index]) {
-          return coordinates[index];
-        }
-        // Fallback to grid if coordinates not provided or insufficient
-        const fallbackCols = Math.ceil(Math.sqrt(index + 1));
-        const fallbackRow = Math.floor(index / fallbackCols);
-        const fallbackCol = index % fallbackCols;
-        return {
-          x: gridSize + fallbackCol * gridSize * 2,
-          y: gridSize + fallbackRow * gridSize * 2,
-        };
-
-      case 'center':
-        return {
-          x: scene.width / 2 + index * gridSize,
-          y: scene.height / 2,
-        };
-
-      case 'grid':
-        const cols = Math.ceil(Math.sqrt(index + 1));
-        const row = Math.floor(index / cols);
-        const col = index % cols;
-        return {
-          x: gridSize + col * gridSize * 2,
-          y: gridSize + row * gridSize * 2,
-        };
-
-      case 'random':
-      default:
-        return {
-          x: Math.random() * (scene.width - gridSize),
-          y: Math.random() * (scene.height - gridSize),
-        };
-    }
+    return this.actorCrud.addActorsToScene(placement, transactionId);
   }
 
   /**
@@ -2220,6 +1944,10 @@ export class FoundryDataAccess {
 
   /**
    * Find actor by name or ID
+   *
+   * TEMPORARY BRIDGE, not a boundary member. Its only remaining caller after the
+   * actor-CRUD extraction is `searchCharacterItems` (:429), character-reading cluster, so
+   * it expires with pass 5.2 and not with this one.
    */
   private findActorByIdentifier(identifier: string): any {
     return this.actorResolver.findActorByIdentifier(identifier);
@@ -2283,6 +2011,13 @@ export class FoundryDataAccess {
 
   /**
    * Get or create a folder for organizing MCP-generated content
+   *
+   * PERMANENT, despite being `private` and despite having exactly ONE caller. That caller
+   * is `importActors`, which is a recorded PERMANENT DEFERRAL and therefore never moves, so
+   * this wrapper never becomes dead. Do NOT read its single caller as evidence that it is
+   * about to expire, and do NOT delete it on the reasoning that the actor-CRUD cluster
+   * which used to call it four times has moved: that reasoning type-checks cleanly and
+   * breaks the one method in this file whose failure mode is silent duplicate actors.
    */
   private async getOrCreateFolder(
     folderName: string,
