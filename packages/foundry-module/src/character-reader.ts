@@ -41,6 +41,7 @@
 // Nothing here was deduplicated or reshaped: `searchCharacterItems`'s `let description`
 // reassignment, `extractSpellcastingData`'s repeated `actorAny.items.filter` scans and
 // `getCharacterInfo`'s duplicated `actor.items` traversals all moved verbatim.
+import { ERROR_MESSAGES } from './constants.js';
 import { FoundrySecurity } from './security.js';
 import { ActorResolver } from './actor-resolver.js';
 
@@ -123,6 +124,192 @@ export class CharacterReader {
     private security: FoundrySecurity,
     private actorResolver: ActorResolver
   ) {}
+
+  /**
+   * Get character/actor information by name or ID.
+   *
+   * `options.include` is additive and opt-in. Absent (or empty), the response is
+   * byte-identical to what this method returned before the option existed, so an
+   * OLD server talking to a NEW module is unaffected. Supported keys:
+   *
+   *   - `flags`          → `flags`, the actor's raw flag object (provenance, e.g.
+   *                        `flags.wodchar.sourceId`). Read WITHOUT `getFlag()` —
+   *                        see the note on `readActorFlags`.
+   *   - `prototypeToken` → `prototypeToken`, the curated token ART (texture src +
+   *                        scale, ring, name, actorLink). This is the only way to
+   *                        see an actor's token art WITHOUT a token placed on a
+   *                        scene, which `get-token-details` requires.
+   *
+   * The response also carries `included`: the keys actually honoured. A NEW
+   * server can therefore tell "the actor genuinely has no flags" apart from "the
+   * module is too old to know what `include` means" — the difference between a
+   * fact and a silent lie about provenance.
+   */
+  async getCharacterInfo(
+    identifier: string,
+    options?: { include?: string[] }
+  ): Promise<CharacterInfo> {
+    let actor: Actor | undefined;
+
+    // Try to find by ID first, then by name
+    if (identifier.length === 16) {
+      // Foundry ID length
+      actor = game.actors.get(identifier);
+    }
+
+    if (!actor) {
+      actor = game.actors.find(a => a.name?.toLowerCase() === identifier.toLowerCase());
+    }
+
+    if (!actor) {
+      throw new Error(`${ERROR_MESSAGES.CHARACTER_NOT_FOUND}: ${identifier}`);
+    }
+
+    // Build character data structure
+    const characterData: CharacterInfo = {
+      id: actor.id || '',
+      name: actor.name || '',
+      type: actor.type,
+      ...(actor.img ? { img: actor.img } : {}),
+      system: this.security.sanitizeData((actor as any).system),
+      items: actor.items.map(item => {
+        return {
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          ...(item.img ? { img: item.img } : {}),
+          system: this.security.sanitizeData(item.system),
+        };
+      }),
+      effects: actor.effects.map(effect => {
+        const eff = effect;
+        const dur = eff.duration;
+        const durRaw = eff._source?.duration;
+        return {
+          id: effect.id,
+          name: eff.name || eff.label || 'Unknown Effect',
+          ...(eff.icon ? { icon: eff.icon } : {}),
+          disabled: eff.disabled,
+          ...(dur
+            ? {
+                duration: {
+                  type: dur.units ?? durRaw?.type ?? 'none',
+                  duration: dur.seconds ?? durRaw?.duration,
+                  remaining: dur.remaining,
+                },
+              }
+            : {}),
+        };
+      }),
+    };
+
+    // ── Opt-in extras (art + provenance). Nothing here runs unless the caller
+    // asked, so the default response shape is unchanged.
+    const requestedInclude = options?.include;
+    const include = Array.isArray(requestedInclude) ? requestedInclude : [];
+    if (include.length > 0) {
+      const honoured: string[] = [];
+      if (include.includes('flags')) {
+        characterData.flags = this.readActorFlags(actor);
+        honoured.push('flags');
+      }
+      if (include.includes('prototypeToken')) {
+        const art = this.extractTokenArt(actor);
+        if (art !== null) characterData.prototypeToken = art;
+        // Honoured even when the actor has no prototypeToken — the caller learns
+        // "asked and answered: there is none", not "the module ignored me".
+        honoured.push('prototypeToken');
+      }
+      characterData.included = honoured;
+    }
+
+    // Add PF2e-specific data if available
+    const actorAny = actor as any;
+
+    // Include actions (PF2e strikes, spells, etc.)
+    if (actorAny.system?.actions) {
+      characterData.actions = actorAny.system.actions.map((action: any) => ({
+        name: action.label || action.name,
+        type: action.type,
+        ...(action.item ? { itemId: action.item.id } : {}),
+        ...(action.variants
+          ? {
+              variants: action.variants.map((v: any) => ({
+                label: v.label,
+                ...(v.traits ? { traits: v.traits } : {}),
+              })),
+            }
+          : {}),
+        ...(action.ready !== undefined ? { ready: action.ready } : {}),
+      }));
+    }
+
+    // Include item variants and toggles
+    const itemVariants: any[] = [];
+    const itemToggles: any[] = [];
+
+    actor.items.forEach(item => {
+      const itemAny = item;
+
+      // Extract rule element variants (e.g., weapon variants, stance toggles)
+      if (itemAny.system?.rules) {
+        itemAny.system.rules.forEach((rule: any, ruleIndex: number) => {
+          // Variants (ChoiceSet, RollOption with choices)
+          if (rule.key === 'ChoiceSet' || (rule.key === 'RollOption' && rule.choices)) {
+            itemVariants.push({
+              itemId: item.id,
+              itemName: item.name,
+              ruleIndex,
+              ruleKey: rule.key,
+              label: rule.label || rule.prompt,
+              ...(rule.selection ? { selected: rule.selection } : {}),
+              ...(rule.choices ? { choices: rule.choices } : {}),
+            });
+          }
+
+          // Toggles (RollOption toggleable, ToggleProperty)
+          if ((rule.key === 'RollOption' && rule.toggleable) || rule.key === 'ToggleProperty') {
+            itemToggles.push({
+              itemId: item.id,
+              itemName: item.name,
+              ruleIndex,
+              ruleKey: rule.key,
+              label: rule.label,
+              option: rule.option,
+              ...(rule.value !== undefined ? { enabled: rule.value } : {}),
+              ...(rule.toggleable !== undefined ? { toggleable: rule.toggleable } : {}),
+            });
+          }
+        });
+      }
+
+      // Also check for item-level toggles (e.g., equipped, identified)
+      if (itemAny.system?.equipped !== undefined) {
+        itemToggles.push({
+          itemId: item.id,
+          itemName: item.name,
+          type: 'equipped',
+          enabled: itemAny.system.equipped,
+        });
+      }
+    });
+
+    // Add to character data if any found
+    if (itemVariants.length > 0) {
+      characterData.itemVariants = itemVariants;
+    }
+    if (itemToggles.length > 0) {
+      characterData.itemToggles = itemToggles;
+    }
+
+    // Extract spellcasting data (PF2e and D&D 5e)
+    const spellcastingEntries = this.extractSpellcastingData(actor);
+    if (spellcastingEntries.length > 0) {
+      characterData.spellcasting = spellcastingEntries;
+    }
+
+    return characterData;
+  }
 
   /**
    * Search within a character's items, spells, actions, and effects
@@ -409,7 +596,7 @@ export class CharacterReader {
   /**
    * Extract spellcasting data from an actor (supports PF2e, D&D 5e, DSA5, and WFRP4e)
    */
-  extractSpellcastingData(actor: Actor): SpellcastingEntry[] {
+  private extractSpellcastingData(actor: Actor): SpellcastingEntry[] {
     const entries: SpellcastingEntry[] = [];
     const actorAny = actor as any;
     const systemId = (game.system as any).id;
@@ -963,5 +1150,53 @@ export class CharacterReader {
     }
 
     return result;
+  }
+
+  /**
+   * The actor's flag object, sanitized for transport.
+   *
+   * Read via `foundry.utils.getProperty(actor, 'flags')` / raw property access —
+   * NEVER `actor.getFlag(scope, key)`, which throws for any scope that is not
+   * core / the system id / the world id / an active module id. `wodchar` (the
+   * scope the importer stamps `sourceId` under) is none of those, so `getFlag`
+   * would throw on exactly the actors this exists to inspect. Same rule as
+   * `importActors`' `findBySourceId`.
+   */
+  private readActorFlags(actor: Actor): Record<string, unknown> {
+    const getProperty = (foundry as any)?.utils?.getProperty;
+    const raw = getProperty ? getProperty(actor, 'flags') : (actor as any)?.flags;
+    const sanitized = this.security.sanitizeData(raw ?? {});
+    return sanitized && typeof sanitized === 'object' ? sanitized : {};
+  }
+
+  /**
+   * The actor's prototype-token ART, curated to the fields that answer "did the
+   * token image survive the import?" — the full prototypeToken is large and
+   * mostly vision/bar configuration nobody reads.
+   *
+   * `prototypeToken` is a DataModel, so it is converted with `toObject()` first;
+   * `Object.keys()` on the live model does not necessarily expose schema fields.
+   */
+  private extractTokenArt(actor: Actor): Record<string, unknown> | null {
+    const proto = (actor as any)?.prototypeToken;
+    if (!proto) return null;
+    const obj: any =
+      typeof proto.toObject === 'function'
+        ? proto.toObject(false)
+        : this.security.sanitizeData(proto);
+    if (!obj || typeof obj !== 'object') return null;
+    const texture = obj.texture ?? {};
+    const art: Record<string, unknown> = {
+      texture: {
+        src: texture.src ?? null,
+        ...(texture.scaleX !== undefined ? { scaleX: texture.scaleX } : {}),
+        ...(texture.scaleY !== undefined ? { scaleY: texture.scaleY } : {}),
+      },
+    };
+    if (obj.name !== undefined) art.name = obj.name;
+    if (obj.actorLink !== undefined) art.actorLink = obj.actorLink;
+    if (obj.ring !== undefined && obj.ring !== null)
+      art.ring = this.security.sanitizeData(obj.ring);
+    return art;
   }
 }

@@ -1,4 +1,4 @@
-import { MODULE_ID, ERROR_MESSAGES } from './constants.js';
+import { MODULE_ID } from './constants.js';
 import { PermissionManager } from './permissions.js';
 import { TransactionManager } from './transaction-manager.js';
 import { PersistentCreatureIndex } from './creature-index.js';
@@ -30,9 +30,9 @@ import {
 // `CharacterInfo`'s own declaration, so importing either would be an unused import under
 // noUnusedLocals — the same asymmetry as `CreatedActorInfo` above, and the reason the
 // travelling set has to be computed as a TRANSITIVE closure. `SpellInfo` goes when
-// `extractSpellcastingData` has moved, so `SpellInfo` is gone already; `SpellcastingEntry`
-// goes when the last bridge does.
-import { CharacterReader, CharacterInfo, SpellcastingEntry } from './character-reader.js';
+// The cluster has moved in full, so `SpellInfo` and `SpellcastingEntry` are gone with it;
+// `CharacterInfo` stays because the `getCharacterInfo` delegation returns it.
+import { CharacterReader, CharacterInfo } from './character-reader.js';
 
 interface SceneInfo {
   id: string;
@@ -156,166 +156,7 @@ export class FoundryDataAccess {
     identifier: string,
     options?: { include?: string[] }
   ): Promise<CharacterInfo> {
-    let actor: Actor | undefined;
-
-    // Try to find by ID first, then by name
-    if (identifier.length === 16) {
-      // Foundry ID length
-      actor = game.actors.get(identifier);
-    }
-
-    if (!actor) {
-      actor = game.actors.find(a => a.name?.toLowerCase() === identifier.toLowerCase());
-    }
-
-    if (!actor) {
-      throw new Error(`${ERROR_MESSAGES.CHARACTER_NOT_FOUND}: ${identifier}`);
-    }
-
-    // Build character data structure
-    const characterData: CharacterInfo = {
-      id: actor.id || '',
-      name: actor.name || '',
-      type: actor.type,
-      ...(actor.img ? { img: actor.img } : {}),
-      system: this.sanitizeData((actor as any).system),
-      items: actor.items.map(item => {
-        return {
-          id: item.id,
-          name: item.name,
-          type: item.type,
-          ...(item.img ? { img: item.img } : {}),
-          system: this.sanitizeData(item.system),
-        };
-      }),
-      effects: actor.effects.map(effect => {
-        const eff = effect;
-        const dur = eff.duration;
-        const durRaw = eff._source?.duration;
-        return {
-          id: effect.id,
-          name: eff.name || eff.label || 'Unknown Effect',
-          ...(eff.icon ? { icon: eff.icon } : {}),
-          disabled: eff.disabled,
-          ...(dur
-            ? {
-                duration: {
-                  type: dur.units ?? durRaw?.type ?? 'none',
-                  duration: dur.seconds ?? durRaw?.duration,
-                  remaining: dur.remaining,
-                },
-              }
-            : {}),
-        };
-      }),
-    };
-
-    // ── Opt-in extras (art + provenance). Nothing here runs unless the caller
-    // asked, so the default response shape is unchanged.
-    const requestedInclude = options?.include;
-    const include = Array.isArray(requestedInclude) ? requestedInclude : [];
-    if (include.length > 0) {
-      const honoured: string[] = [];
-      if (include.includes('flags')) {
-        characterData.flags = this.readActorFlags(actor);
-        honoured.push('flags');
-      }
-      if (include.includes('prototypeToken')) {
-        const art = this.extractTokenArt(actor);
-        if (art !== null) characterData.prototypeToken = art;
-        // Honoured even when the actor has no prototypeToken — the caller learns
-        // "asked and answered: there is none", not "the module ignored me".
-        honoured.push('prototypeToken');
-      }
-      characterData.included = honoured;
-    }
-
-    // Add PF2e-specific data if available
-    const actorAny = actor as any;
-
-    // Include actions (PF2e strikes, spells, etc.)
-    if (actorAny.system?.actions) {
-      characterData.actions = actorAny.system.actions.map((action: any) => ({
-        name: action.label || action.name,
-        type: action.type,
-        ...(action.item ? { itemId: action.item.id } : {}),
-        ...(action.variants
-          ? {
-              variants: action.variants.map((v: any) => ({
-                label: v.label,
-                ...(v.traits ? { traits: v.traits } : {}),
-              })),
-            }
-          : {}),
-        ...(action.ready !== undefined ? { ready: action.ready } : {}),
-      }));
-    }
-
-    // Include item variants and toggles
-    const itemVariants: any[] = [];
-    const itemToggles: any[] = [];
-
-    actor.items.forEach(item => {
-      const itemAny = item;
-
-      // Extract rule element variants (e.g., weapon variants, stance toggles)
-      if (itemAny.system?.rules) {
-        itemAny.system.rules.forEach((rule: any, ruleIndex: number) => {
-          // Variants (ChoiceSet, RollOption with choices)
-          if (rule.key === 'ChoiceSet' || (rule.key === 'RollOption' && rule.choices)) {
-            itemVariants.push({
-              itemId: item.id,
-              itemName: item.name,
-              ruleIndex,
-              ruleKey: rule.key,
-              label: rule.label || rule.prompt,
-              ...(rule.selection ? { selected: rule.selection } : {}),
-              ...(rule.choices ? { choices: rule.choices } : {}),
-            });
-          }
-
-          // Toggles (RollOption toggleable, ToggleProperty)
-          if ((rule.key === 'RollOption' && rule.toggleable) || rule.key === 'ToggleProperty') {
-            itemToggles.push({
-              itemId: item.id,
-              itemName: item.name,
-              ruleIndex,
-              ruleKey: rule.key,
-              label: rule.label,
-              option: rule.option,
-              ...(rule.value !== undefined ? { enabled: rule.value } : {}),
-              ...(rule.toggleable !== undefined ? { toggleable: rule.toggleable } : {}),
-            });
-          }
-        });
-      }
-
-      // Also check for item-level toggles (e.g., equipped, identified)
-      if (itemAny.system?.equipped !== undefined) {
-        itemToggles.push({
-          itemId: item.id,
-          itemName: item.name,
-          type: 'equipped',
-          enabled: itemAny.system.equipped,
-        });
-      }
-    });
-
-    // Add to character data if any found
-    if (itemVariants.length > 0) {
-      characterData.itemVariants = itemVariants;
-    }
-    if (itemToggles.length > 0) {
-      characterData.itemToggles = itemToggles;
-    }
-
-    // Extract spellcasting data (PF2e and D&D 5e)
-    const spellcastingEntries = this.extractSpellcastingData(actor);
-    if (spellcastingEntries.length > 0) {
-      characterData.spellcasting = spellcastingEntries;
-    }
-
-    return characterData;
+    return this.characterReader.getCharacterInfo(identifier, options);
   }
 
   /**
@@ -358,16 +199,6 @@ export class FoundryDataAccess {
     totalMatches: number;
   }> {
     return this.characterReader.searchCharacterItems(params);
-  }
-
-  /**
-   * TEMPORARY BRIDGE to CharacterReader.extractSpellcastingData. Not a boundary member: nothing outside
-   * the class reaches it. Its only caller is `getCharacterInfo`, still on the facade.
-   * Deleted in stage D, in the same commit that restores `private` on the member it
-   * bridges — the widening is part of the bridge and nets to zero across the pass.
-   */
-  private extractSpellcastingData(actor: Actor): SpellcastingEntry[] {
-    return this.characterReader.extractSpellcastingData(actor);
   }
 
   /**
@@ -434,51 +265,6 @@ export class FoundryDataAccess {
   }
 
   /**
-   * The actor's flag object, sanitized for transport.
-   *
-   * Read via `foundry.utils.getProperty(actor, 'flags')` / raw property access —
-   * NEVER `actor.getFlag(scope, key)`, which throws for any scope that is not
-   * core / the system id / the world id / an active module id. `wodchar` (the
-   * scope the importer stamps `sourceId` under) is none of those, so `getFlag`
-   * would throw on exactly the actors this exists to inspect. Same rule as
-   * `importActors`' `findBySourceId`.
-   */
-  private readActorFlags(actor: Actor): Record<string, unknown> {
-    const getProperty = (foundry as any)?.utils?.getProperty;
-    const raw = getProperty ? getProperty(actor, 'flags') : (actor as any)?.flags;
-    const sanitized = this.sanitizeData(raw ?? {});
-    return sanitized && typeof sanitized === 'object' ? sanitized : {};
-  }
-
-  /**
-   * The actor's prototype-token ART, curated to the fields that answer "did the
-   * token image survive the import?" — the full prototypeToken is large and
-   * mostly vision/bar configuration nobody reads.
-   *
-   * `prototypeToken` is a DataModel, so it is converted with `toObject()` first;
-   * `Object.keys()` on the live model does not necessarily expose schema fields.
-   */
-  private extractTokenArt(actor: Actor): Record<string, unknown> | null {
-    const proto = (actor as any)?.prototypeToken;
-    if (!proto) return null;
-    const obj: any =
-      typeof proto.toObject === 'function' ? proto.toObject(false) : this.sanitizeData(proto);
-    if (!obj || typeof obj !== 'object') return null;
-    const texture = obj.texture ?? {};
-    const art: Record<string, unknown> = {
-      texture: {
-        src: texture.src ?? null,
-        ...(texture.scaleX !== undefined ? { scaleX: texture.scaleX } : {}),
-        ...(texture.scaleY !== undefined ? { scaleY: texture.scaleY } : {}),
-      },
-    };
-    if (obj.name !== undefined) art.name = obj.name;
-    if (obj.actorLink !== undefined) art.actorLink = obj.actorLink;
-    if (obj.ring !== undefined && obj.ring !== null) art.ring = this.sanitizeData(obj.ring);
-    return art;
-  }
-
-  /**
    * Get active scene information
    */
   async getActiveScene(): Promise<SceneInfo> {
@@ -511,17 +297,6 @@ export class FoundryDataAccess {
    */
   async getAvailablePacks() {
     return this.compendiumSearch.getAvailablePacks();
-  }
-
-  /**
-   * Sanitize data to remove sensitive information and make it JSON-safe
-   *
-   * TEMPORARY BRIDGE, not a boundary member. Untouched by the actor-CRUD extraction — that
-   * cluster sanitises nothing, so this wrapper is entirely the character-reading cluster's:
-   * `getCharacterInfo` x2, `readActorFlags`, `extractTokenArt` x2. Expires with pass 5.2.
-   */
-  private sanitizeData(data: any): any {
-    return this.security.sanitizeData(data);
   }
 
   /**
