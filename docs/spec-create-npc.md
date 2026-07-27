@@ -9,7 +9,14 @@ Stack:
 
 - `packages/mcp-server/` — Node.js MCP server in TypeScript
 - `packages/foundry-module/` — modulo Foundry VTT (browser)
-- `packages/shared/` — tipi condivisi (workspace dep)
+- `shared/` — tipi condivisi (`@foundry-mcp/shared`). **Nota: il percorso è
+  `shared/` alla radice del repo, NON `packages/shared/`** — vedi l'array
+  `workspaces` in `package.json` (`["packages/*", "shared"]`). Il workspace
+  esiste, ma è quasi interamente inutilizzato: solo
+  `packages/mcp-server/src/tools/campaign-management.ts` lo importa (tipi
+  campagna), e `packages/foundry-module` non lo dichiara come dipendenza e
+  ridichiara i propri tipi localmente. Non aggiungere un tipo a `shared/`
+  aspettandosi che i due package lo condividano: oggi non lo fanno.
 
 Pattern architetturale a 4 layer (seguito da tutti i tool esistenti):
 
@@ -340,8 +347,9 @@ Nuovo metodo pubblico `createNpcActor(data)`:
 Dopo ogni layer, verificare TypeScript:
 
 ```bash
-# Build shared prima (dipendenza workspace)
-cd packages/shared && node_modules/.bin/tsc
+# Build shared prima (dipendenza workspace di mcp-server) — percorso `shared/`
+# alla radice, non `packages/shared/`
+cd shared && node_modules/.bin/tsc
 
 # Verifica mcp-server (Layer 1 e 2)
 cd packages/mcp-server && node_modules/.bin/tsc --noEmit

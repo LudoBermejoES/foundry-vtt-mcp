@@ -22,14 +22,25 @@ architecture section, per-field tables, staged plan.
 | `packages/mcp-server/`     | Node.js MCP server (TypeScript, stdio to the agent, WebSocket/WebRTC to Foundry) |
 | `packages/foundry-module/` | The Foundry VTT module (browser context, GM client)                              |
 
-> **Correction to the precedent spec.** `spec-create-npc.md` lists a third
-> workspace, `packages/shared/` — "tipi condivisi (workspace dep)". It does not
-> exist in this fork. Shared types are duplicated locally instead; see the
-> comment at `packages/foundry-module/src/data-access.ts:4` — _"Local type
-> definitions to avoid shared package import issues"_ — above the local
-> `CharacterInfo` interface (`data-access.ts:5-17`). Any spec that says "add the
-> type to `shared`" is stale; a response-shape change must be edited in **both**
-> packages.
+> **Correction to the precedent spec — itself corrected.** `spec-create-npc.md`
+> listed a third workspace as `packages/shared/`. That **path** is wrong, and an
+> earlier revision of this note over-corrected by saying the workspace "does not
+> exist in this fork". It does exist: it is `shared/` at the **repo root**,
+> published as `@foundry-mcp/shared`, and it is in the root `package.json`
+> `workspaces` array (`["packages/*", "shared"]`).
+>
+> What is true is that it is **not actually shared**. It exports ~74 symbols, of
+> which 7 are consumed anywhere — the campaign types, imported by exactly one
+> file, `packages/mcp-server/src/tools/campaign-management.ts`.
+> `packages/foundry-module` does not declare it as a dependency and re-declares
+> the response shapes locally; see `packages/foundry-module/src/data-access.ts`
+> — _"Local type definitions to avoid shared package import issues"_ — above the
+> local `CharacterInfo` interface. So the operative rule is unchanged: any spec
+> that says "add the type to `shared`" and expects both packages to pick it up is
+> stale, and a response-shape change must be edited in **both** packages (three
+> places, if the shape also has a `shared/` copy). See
+> `docs/refactor-data-access.md` and the `foundry-module-architecture`
+> capability's response-shape-mirroring requirement.
 
 ### 1.2 The 4-layer architecture
 

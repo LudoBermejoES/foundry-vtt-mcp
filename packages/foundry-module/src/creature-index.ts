@@ -1,9 +1,15 @@
 // Extracted from data-access.ts as part of the God-class split (behaviour-preserving).
 // See docs/refactor-data-access.md for the module map.
 //
-// Types below are intentionally duplicated from data-access.ts (this fork has no
-// packages/shared — see the comment at the top of data-access.ts) rather than
-// imported, to keep this module free of a circular dependency on its own consumer.
+// Types below are intentionally duplicated from data-access.ts (see the comment
+// at the top of data-access.ts) rather than imported, to keep this module free of
+// a circular dependency on its own consumer.
+//
+// The `shared/` workspace (@foundry-mcp/shared) DOES exist, at the repo root —
+// an earlier version of this comment wrongly said it did not. It is simply not a
+// dependency of this package, and it does not declare the creature-index shapes
+// at all; a third, differently-shaped copy of them lives in
+// packages/mcp-server/src/systems/types.ts. Change one, check all three.
 import { MODULE_ID } from './constants.js';
 
 // D&D 5e Enhanced Creature Index

@@ -1,27 +1,47 @@
 # `data-access.ts` God-class split — module map
 
+> **This document is spec-designated.** It is the authoritative inventory
+> required by the `foundry-module-architecture` capability — see
+> `mago20/openspec/specs/foundry-module-architecture/spec.md`, requirement
+> _"The module map is the inventory and is updated with every extraction"_, and
+> the change that established it, `specify-foundry-module-architecture`.
+> Keeping it current is a **requirement**, not a courtesy: any change that
+> extracts a concern, adds a collaborator, moves a load-bearing comment, or
+> defers a move must update this file in the same change. There is no automated
+> drift guard (see "Verifying this file is current").
+>
+> The forward plan for the remaining clusters lives in
+> `refactor-data-access-stage2.md`, which refines — and does not supersede — the
+> "Not yet extracted" section below.
+
 `packages/foundry-module/src/data-access.ts` held two classes and 138
-methods (10,554 lines). `FoundryDataAccess` is `queries.ts`'s only entry
-point into Foundry, and `packages/mcp-server` depends on the shapes it
-returns, so this split is a **facade + collaborators** refactor: the class
-stays the entry point with an unchanged public surface, and its
-implementation is delegated to small, single-purpose collaborator classes
-held as private fields. No behaviour, signature, or side-effect ordering was
-changed — see the drift-safety notes at the end.
+methods (10,554 lines). `FoundryDataAccess` is the only entry point into
+Foundry for `queries.ts`, `main.ts` and `settings.ts`, and
+`packages/mcp-server` depends on the shapes it returns, so this split is a
+**facade + collaborators** refactor: the class stays the entry point with an
+unchanged externally-reached surface, and its implementation is delegated to
+small, single-purpose collaborator classes held as private fields. No
+behaviour, signature, or side-effect ordering was changed — see the
+drift-safety notes at the end.
 
 ## Layout
 
-| File                     | Lines | Extracted from `FoundryDataAccess`                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Depends on                   |
-| ------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `creature-index.ts`      | 1,452 | The **other** class in the original file, `PersistentCreatureIndex` (26 methods) — file-based creature index cache for D&D5e/PF2e/Cosmere/MGT2e. Already fully self-contained (used only via one field, `this.persistentIndex`); moved verbatim.                                                                                                                                                                                                                                             | —                            |
-| `security.ts`            | 219   | `validateFoundryState`, `auditLog`, `sanitizeData`, `removeSensitiveFields`, `isSensitiveOrProblematicField`, `safeJSONStringify` — the output-sanitization/write-audit helpers called from nearly every concern.                                                                                                                                                                                                                                                                            | —                            |
-| `actor-resolver.ts`      | 88    | `findActorByIdentifier`, `getOrCreateFolder` — actor/folder lookup used across item CRUD, feature/attack builders, WFRP4e updates, journal/actor creation.                                                                                                                                                                                                                                                                                                                                   | —                            |
-| `journal-manager.ts`     | 284   | `createJournalEntry`, `listJournals`, `getJournalContent`, `getJournalPageContent`, `updateJournalContent`.                                                                                                                                                                                                                                                                                                                                                                                  | `security`, `actor-resolver` |
-| `world-items-manager.ts` | 270   | `listWorldItems`, `updateWorldItems`, `createWorldItems`.                                                                                                                                                                                                                                                                                                                                                                                                                                    | `security`                   |
-| `actor-directory.ts`     | 164   | `listActors`, `getFriendlyNPCs`, `getPartyCharacters`, `getConnectedPlayers`, `findPlayers`, `findActor`.                                                                                                                                                                                                                                                                                                                                                                                    | `security`, `actor-resolver` |
-| `roll-manager.ts`        | 918   | Interactive roll-request chat cards: `validateWritePermissions`, `requestPlayerRolls`, `resolveTargetPlayer`, `buildRollFormula`, `getSkillCode`, `buildRollButtonLabel`, `attachRollButtonHandlers`, `saveRollState`, `getRollState`, `saveRollButtonMessageId`, `getRollButtonMessageId`, `getRollStateFromMessage`, `updateRollButtonMessage`, `requestRollStateSave`, `broadcastRollState`, `cleanOldRollStates`, `rollDice`, plus the `rollButtonProcessingStates` in-flight-click map. | `security`                   |
-| `scene-token-manager.ts` | 695   | `getActiveScene`, `getTokenDisposition`, `listScenes`, `switchScene`, `getCharacterEntity`, `moveToken`, `updateToken`, `deleteTokens`, `getTokenDetails`, `toggleTokenCondition`, `getAvailableConditions`.                                                                                                                                                                                                                                                                                 | `security`                   |
-| `data-access.ts`         | 7,099 | The facade: unchanged public surface, thin delegations to the above, plus everything not yet extracted (see below).                                                                                                                                                                                                                                                                                                                                                                          | all of the above             |
+**Sizes are approximate magnitudes for prioritisation only.** They are quoted
+as of the recount below and drift with every commit; describe structure by
+symbol and file, never by line number. Recount with
+`wc -l packages/foundry-module/src/*.ts`.
+
+| File                     | Lines (approx.) | Extracted from `FoundryDataAccess`                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Depends on                   |
+| ------------------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `creature-index.ts`      | ~1,450          | The **other** class in the original file, `PersistentCreatureIndex` (26 methods) — file-based creature index cache for D&D5e/PF2e/Cosmere/MGT2e. Already fully self-contained (used only via one field, `this.persistentIndex`); moved verbatim.                                                                                                                                                                                                                                             | —                            |
+| `security.ts`            | ~220            | `validateFoundryState`, `auditLog`, `sanitizeData`, `removeSensitiveFields`, `isSensitiveOrProblematicField`, `safeJSONStringify` — the output-sanitization/write-audit helpers called from nearly every concern.                                                                                                                                                                                                                                                                            | —                            |
+| `actor-resolver.ts`      | ~90             | `findActorByIdentifier`, `getOrCreateFolder` — actor/folder lookup used across item CRUD, feature/attack builders, WFRP4e updates, journal/actor creation.                                                                                                                                                                                                                                                                                                                                   | —                            |
+| `journal-manager.ts`     | ~285            | `createJournalEntry`, `listJournals`, `getJournalContent`, `getJournalPageContent`, `updateJournalContent`.                                                                                                                                                                                                                                                                                                                                                                                  | `security`, `actor-resolver` |
+| `world-items-manager.ts` | ~270            | `listWorldItems`, `updateWorldItems`, `createWorldItems`.                                                                                                                                                                                                                                                                                                                                                                                                                                    | `security`                   |
+| `actor-directory.ts`     | ~255            | `listActors`, `getFriendlyNPCs`, `getPartyCharacters`, `getConnectedPlayers`, `findPlayers`, `findActor`, **`findActorsByFlag`** (added by the `03a6836` read-path change, which is why this file grew from the 164 lines first recorded here). **Carries a load-bearing comment** — see the inventory below.                                                                                                                                                                                | `security`, `actor-resolver` |
+| `roll-manager.ts`        | ~920            | Interactive roll-request chat cards: `validateWritePermissions`, `requestPlayerRolls`, `resolveTargetPlayer`, `buildRollFormula`, `getSkillCode`, `buildRollButtonLabel`, `attachRollButtonHandlers`, `saveRollState`, `getRollState`, `saveRollButtonMessageId`, `getRollButtonMessageId`, `getRollStateFromMessage`, `updateRollButtonMessage`, `requestRollStateSave`, `broadcastRollState`, `cleanOldRollStates`, `rollDice`, plus the `rollButtonProcessingStates` in-flight-click map. | `security`                   |
+| `scene-token-manager.ts` | ~700            | `getActiveScene`, `getTokenDisposition`, `listScenes`, `switchScene`, `getCharacterEntity`, `moveToken`, `updateToken`, `deleteTokens`, `getTokenDetails`, `toggleTokenCondition`, `getAvailableConditions`.                                                                                                                                                                                                                                                                                 | `security`                   |
+| `data-access.ts`         | ~7,220          | The facade: unchanged externally-reached surface, thin delegations to the above, plus everything not yet extracted (see below). Was 7,099 at `902f3f0`; the `03a6836` read-path change added the `include`-option plumbing and the flag/token-art helpers.                                                                                                                                                                                                                                   | all of the above             |
 
 `FoundryDataAccess`'s own fields, in construction order (matters — later
 fields' initializers reference earlier ones):
@@ -30,6 +50,48 @@ fields' initializers reference earlier ones):
 private moduleId, persistentIndex, security, actorResolver,
         journals, worldItems, actorDirectory, rollManager, sceneTokenManager;
 ```
+
+## The externally-reached surface (the compatibility boundary)
+
+The frozen surface is defined by **who reaches it**, not by the
+`public`/`private` modifier — the spec's compatibility-boundary requirement
+turns on exactly this. Measured against the current source, the class declares
+**113 members** (74 non-private methods + 30 private methods + 9 private
+collaborator fields), of which **61 are actually reached from outside**.
+
+There are exactly **five** external reach sites, and `queries.ts` is not the
+only one:
+
+| Reach site                | Accesses | Notes                                                                                                                                             |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queries.ts`              | ~116     | The bridge. 75 `CONFIG.queries[…]` registrations, each a `handleX` that calls `this.dataAccess.X(…)`.                                             |
+| `main.ts`                 | 7        | `queryHandlers.dataAccess.attachRollButtonHandlers` (`:638`, `:646`), `.rebuildEnhancedCreatureIndex` (`:137`–`:138`), `.saveRollState` (`:557`). |
+| `settings.ts`             | 2        | `bridge?.dataAccess?.rebuildEnhancedCreatureIndex` (`:47`).                                                                                       |
+| `import-actors.test.ts`   | —        | 28 cases, all targeting `importActors`.                                                                                                           |
+| `actor-read-path.test.ts` | —        | 17 cases, targeting `getCharacterInfo`'s flags/art fields and `findActorsByFlag`.                                                                 |
+
+**Consequence for extraction passes:** three members (`attachRollButtonHandlers`,
+`rebuildEnhancedCreatureIndex`, `saveRollState`) are reached **only** from
+`main.ts`/`settings.ts` and by no query handler and no test. Judging the boundary
+from `queries.ts` alone would classify them as internal and therefore freely
+deletable, which would silently break the roll-button chat hook and the
+creature-index rebuild setting. Always include `main.ts` and `settings.ts`.
+
+13 non-private members are reached from nowhere at all (`getCharacterEntity`,
+`createActorFromCompendium` — the bridge query of that name is handled by
+`handleCreateActorFromCompendium`, which calls
+`createActorFromCompendiumEntry` instead — plus 9 roll-state members reached
+only from inside `roll-manager.ts`, and `broadcastRollState`/`cleanOldRollStates`).
+These are dead-surface candidates, **not** cleaned up here: deleting a
+non-private member is a boundary change under the spec and belongs to its own
+change.
+
+A reproducible extractor for this list (TS compiler API, ~90 lines, no
+dependency beyond the `typescript` already in the repo) is described in
+`refactor-data-access-stage2.md` under "The compatibility boundary". Run before
+and after a pass and diff; the diff across `902f3f0` is empty, and across
+`03a6836` it shows exactly that commit's two intentional additive changes
+(`findActorsByFlag` added, `getCharacterInfo` gaining `options?`).
 
 ## Why not a pure by-system split
 
@@ -64,8 +126,16 @@ Two mechanisms, chosen per case:
    DAG (`security`/`actor-resolver` are leaves; concern modules depend on
    them, never the reverse) and makes a forgotten rewrite a **compile
    error** (`tsc` fails with "property does not exist"), not a silent
-   behaviour change — this was the actual safety net given the thin (28
-   module tests) coverage.
+   behaviour change — this was the actual safety net given the thin coverage
+   (at the time of the split, one test file with 28 cases, all of them
+   targeting `importActors`).
+
+   **Current coverage, recounted:** 2 test files, **45 cases** —
+   `import-actors.test.ts` (28) and `actor-read-path.test.ts` (17, added by
+   `03a6836`). Workspace-wide `npm run test --workspaces` is 327 (282
+   `mcp-server` + 45 `foundry-module`). The "28" first recorded here was
+   correct for the single test file that existed then; it is now the count of
+   one of two files, not of the package.
 
 Three genuinely dead private wrapper methods
 (`removeSensitiveFields`/`isSensitiveOrProblematicField`/`safeJSONStringify`)
@@ -106,26 +176,59 @@ pass, using the same facade+collaborator pattern:
    `addAttackWithSaveToActor`, `setActorSpellcasting`, `addSpellsToActor`,
    `addFeaturesFromCompendium`, `useItem`. Depends on `security` +
    `actor-resolver`.
-5. `addActorsToScene` and `calculateTokenPosition` were deliberately **left
-   on the facade** rather than moved into `scene-token-manager.ts`: they're
-   reached from the actor-creation flow (`createActorFromCompendium*`), so
-   they're a better fit for the actor-CRUD module above once that exists —
-   moving them into `scene-token-manager.ts` first would just create a new
-   cross-module dependency to undo.
 
-## Load-bearing comments (grep for `Do NOT`/`never`/`WRITES`/`deliberately`)
+## Deliberately left on the facade (recorded deferrals)
 
-All 10 are still in `data-access.ts`, verbatim, since they live inside
-`importActors` (not-yet-extracted, see above):
+These members look like they belong to an existing collaborator but are
+**intentionally** still on `FoundryDataAccess`. Under the spec's facade and DAG
+requirements a recorded deferral is permitted; an unrecorded one is a violation.
+Anything added to this section needs a member, a destination, and a reason.
 
-- `getOrCreateFolder writes, so dry runs only *look up* folders` (dryRun contract)
-- `Read the flag via RAW property access, never actor.getFlag('wodchar', …): getFlag throws …` (the wodchar-scope gotcha)
-- `Do NOT refactor this into a post-create setFlag/update — a timeout between the two would leave an invisible actor …` (sourceId-stamping-before-create contract)
-- `A skip writes nothing, so settle it BEFORE resolving any folder` (ordering contract for the no-op path)
-- the three soft-validation `// 3. Soft validation — collect warnings, do NOT block creation` / `never block` comments in the actor-mechanics builders (still in `data-access.ts`, not yet moved)
+| Member                              | Apparent home                                         | Why it stays, for now                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `addActorsToScene`                  | `scene-token-manager.ts`                              | Reached from the actor-creation flow (`createActorFromCompendium`/`…Entry`), not from any scene/token path, and it uses the module-level `permissionManager`/`ERROR_MESSAGES` imports directly rather than `this.sceneTokenManager`. Moving it to `scene-token-manager.ts` first would create a cross-module dependency that the actor-CRUD extraction would immediately have to undo. Goes with **actor CRUD** (cluster 3). |
+| `calculateTokenPosition`            | `scene-token-manager.ts`                              | Private sibling called only by `addActorsToScene`; moves with it, for the same reason.                                                                                                                                                                                                                                                                                                                                       |
+| `readActorFlags`, `extractTokenArt` | `actor-directory.ts` (adjacent to `findActorsByFlag`) | Added by `03a6836` and physically placed next to the `actor-directory` wrappers, but their only caller today is `getCharacterInfo`. They go with **character reading** (cluster 2) unless a later change gives `ActorDirectory` a direct caller — re-check at extraction time. `readActorFlags` carries a cross-referencing load-bearing comment; see the inventory below.                                                   |
+| `permissionManager` (not injected)  | constructor injection                                 | A pre-existing module-level singleton imported directly by `journal-manager`, `roll-manager` and `scene-token-manager`. The spec's injection requirement explicitly carves this out; closing the carve-out is its own change.                                                                                                                                                                                                |
 
-When actor CRUD is eventually extracted, these must move to
-`actor-crud.ts` **unedited**.
+## Load-bearing comments (grep for `Do NOT`/`never`/`NEVER`/`WRITES`/`deliberately`/`RECONCIL`/`CRITICAL`)
+
+**Recounted: 13, and they are no longer all in `data-access.ts`.** The earlier
+claim ("all 10, all inside `importActors`") was true at `902f3f0` and is now
+wrong in both respects — `03a6836` added three and put one of them in an
+already-extracted collaborator. Line numbers are indicative only.
+
+### In `data-access.ts`
+
+| Location                                                                                                             | Guards                                                                                           | Destination cluster                                |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `~358` — "Read WITHOUT `getFlag()`"                                                                                  | `getCharacterInfo`'s flags option (param JSDoc)                                                  | Character reading                                  |
+| `~2430` — "including why the flag must NOT be read with `actor.getFlag()`"                                           | the `findActorsByFlag` facade wrapper's own JSDoc, pointing at `ActorDirectory.findActorsByFlag` | **Stays on the facade** — it documents the wrapper |
+| `~2457` — "NEVER `actor.getFlag(scope, key)`, which throws for any scope that is not …"                              | `readActorFlags`                                                                                 | Character reading                                  |
+| `~4906` — "Soft validation — collect warnings, do NOT block creation"                                                | `createNpcActor`                                                                                 | **Actor CRUD**, not mechanics builders             |
+| `~5084` — "Soft validation — collect warnings, never block"                                                          | `addAttackToActor`                                                                               | Actor mechanics builders                           |
+| `~5319` — "Soft validation — collect warnings, never block"                                                          | `addAuraToActor`                                                                                 | Actor mechanics builders                           |
+| `~5591` — "Soft validation — both damage groups unified"                                                             | `addAttackWithSaveToActor`                                                                       | Actor mechanics builders                           |
+| `~6506` — "getOrCreateFolder writes, so dry runs only _look up_ folders"                                             | `importActors` dryRun contract                                                                   | Actor CRUD tail                                    |
+| `~6557` — "Read the flag via RAW property access, never `actor.getFlag('wodchar', …)`: getFlag throws …"             | `importActors`' `findBySourceId`                                                                 | Actor CRUD tail                                    |
+| `~6616` — "RECONCILABILITY — this ordering is load-bearing … Do NOT refactor this into a post-create setFlag/update" | the sourceId stamp-before-`Actor.create` ordering                                                | Actor CRUD tail                                    |
+| `~6642` — "A skip writes nothing, so settle it BEFORE resolving any folder"                                          | `importActors` no-op path ordering                                                               | Actor CRUD tail                                    |
+| `~6665` — "so an update that keeps its folder never reaches getOrCreateFolder"                                       | `importActors` folder-placement ordering                                                         | Actor CRUD tail                                    |
+
+Earlier counts said "three soft-validation comments in the actor-mechanics
+builders". There are **four**, and one of the four (`createNpcActor`) is in
+actor CRUD, not the builders. Corrected above.
+
+### Outside `data-access.ts` — the ones the earlier count missed
+
+| Location                                                                                                                                                                                 | Guards                                   | Hazard                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actor-directory.ts:157-166` — "CRITICAL — the flag is read by RAW property access, never `actor.getFlag(scope, key)` … Same rule as the import path (`data-access.ts` `importActors`)." | `ActorDirectory.findActorsByFlag`        | **The one genuine documentation hazard in the package.** It names `data-access.ts` explicitly. When `importActors` moves, this cross-reference goes stale — the prose still reads correctly but no longer names a real file. Update it **in the same diff** that moves `importActors`. The same applies in reverse to the `~2457` `readActorFlags` comment, which cross-references `importActors` by name. |
+| `queries.ts:416-423` — "Append-only; never remove an entry … the server pre-flights this list and refuses a dry run unless the capability is advertised."                                | the ping/pong `capabilities` string list | This is the cross-package version handshake the spec's mirroring requirement leans on. It has **no type declaration on either side**; the contract is the comment.                                                                                                                                                                                                                                         |
+
+When actor CRUD is extracted, every comment marked "Actor CRUD" above must move
+to the new file **unedited**, except the two cross-references named in the
+hazard table, which must be re-pointed at their new files in the same diff.
 
 ## Pre-existing oddities noticed while moving code (left alone, not bugs)
 
@@ -153,6 +256,19 @@ verbatim and already covered by the 50-error eslint baseline:
 
 ## Verifying this file is current
 
-There is no automated drift guard for this note (unlike `webgen`'s
-generated trees) — if you extract another concern, update the table above
-by hand.
+There is no automated drift guard for this note (unlike `webgen`'s generated
+trees), and the spec makes keeping it current a requirement rather than a
+courtesy — so verify by hand, in the same change as the extraction:
+
+```bash
+cd /Users/ludo/code/mago20/foundry-vtt-mcp
+wc -l packages/foundry-module/src/*.ts | sort -rn      # the Layout table's sizes
+grep -rn 'dataAccess[?]\?\.' packages/foundry-module/src --include='*.ts' \
+  | awk -F: '{print $1}' | sort | uniq -c              # the external reach sites
+grep -nE 'Do NOT|do NOT|NEVER|never |WRITES|writes,|deliberately|RECONCIL|CRITICAL' \
+  packages/foundry-module/src/*.ts | grep -v '\.test\.ts'   # load-bearing comments
+npx vitest run --reporter=dot                          # the test count
+```
+
+If a figure here disagrees with the source, the map is the defect — correct the
+map. A stale map is never licence to ignore the requirements it records.
