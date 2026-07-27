@@ -104,3 +104,6 @@ VISUAL-CONFIRMATION.md
 /MISSING_*.md
 /REGISTRY_*.md
 /TOOL_INVENTORY.md
+
+# CodeGraph index (local code-intelligence cache, never committed)
+.codegraph/
