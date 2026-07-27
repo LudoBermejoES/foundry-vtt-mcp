@@ -148,6 +148,97 @@ export class ActorDirectory {
   }
 
   /**
+   * Find every actor carrying a flag at `flagPath`, optionally restricted to a
+   * set of exact values and/or an actor type.
+   *
+   * READ-ONLY. This is the read path that the import's idempotency key used to
+   * lack: before it existed, the only way to answer "does an actor with
+   * sourceId X already exist?" was to fire the *write* path with
+   * `overwrite: false` and see whether it reported `skipped`.
+   *
+   * CRITICAL — the flag is read by RAW property access, never
+   * `actor.getFlag(scope, key)`: `getFlag` throws
+   * "Flag scope 'wodchar' is not valid or not currently active" for any scope
+   * that is not core / the system id / the world id / an ACTIVE module id, and
+   * `wodchar` is none of those. Foundry still stores arbitrary flag scopes as
+   * raw document data, so reading it directly is both correct and required.
+   * Same rule as the import path (`data-access.ts` `importActors`).
+   *
+   * Deliberately PLURAL: two actors sharing one flag value is a real failure
+   * mode (the import's `find()` makes the second one permanently unreachable),
+   * so the caller must be able to see it rather than have it collapsed away.
+   */
+  async findActorsByFlag(data: {
+    flagPath: string;
+    values?: string[];
+    exists?: boolean;
+    type?: string;
+  }): Promise<{
+    matches: Array<{
+      id: string;
+      name: string;
+      type: string;
+      img?: string;
+      folder: string | null;
+      flagValue: string;
+    }>;
+    total: number;
+  }> {
+    this.security.validateFoundryState();
+
+    const flagPath = typeof data?.flagPath === 'string' ? data.flagPath.trim() : '';
+    if (!/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){1,3}$/.test(flagPath)) {
+      throw new Error(
+        `flagPath must be a dotted scope.key path of 2-4 segments (got "${data?.flagPath ?? ''}")`
+      );
+    }
+    const wantValues = Array.isArray(data?.values)
+      ? data.values.filter(v => v !== undefined)
+      : null;
+    if (wantValues === null && data?.exists !== true) {
+      throw new Error('either `values` (non-empty) or `exists: true` is required');
+    }
+    if (wantValues !== null && wantValues.length === 0) {
+      throw new Error('either `values` (non-empty) or `exists: true` is required');
+    }
+
+    const getProperty = (foundry as any)?.utils?.getProperty;
+    const readFlag = (actor: any): unknown =>
+      getProperty
+        ? getProperty(actor, `flags.${flagPath}`)
+        : flagPath.split('.').reduce((acc: any, k: string) => acc?.[k], actor?.flags);
+
+    const wanted = wantValues === null ? null : new Set(wantValues.map(v => String(v)));
+
+    const matches: Array<{
+      id: string;
+      name: string;
+      type: string;
+      img?: string;
+      folder: string | null;
+      flagValue: string;
+    }> = [];
+
+    for (const actor of (game.actors as any) || []) {
+      if (data.type && actor.type !== data.type) continue;
+      const raw = readFlag(actor);
+      if (raw === undefined || raw === null || raw === '') continue;
+      const flagValue = String(raw);
+      if (wanted !== null && !wanted.has(flagValue)) continue;
+      matches.push({
+        id: actor.id || '',
+        name: actor.name || '',
+        type: actor.type,
+        ...(actor.img ? { img: actor.img } : {}),
+        folder: actor.folder?.name ?? null,
+        flagValue,
+      });
+    }
+
+    return { matches, total: matches.length };
+  }
+
+  /**
    * Find single actor by identifier
    */
   async findActor(data: { identifier: string }): Promise<{ id: string; name: string } | null> {

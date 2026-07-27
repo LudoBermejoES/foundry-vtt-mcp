@@ -147,7 +147,15 @@ export class WoDAddItemsTools {
         if (!match || !match.pack || !match.id) {
           return {
             success: false,
-            error: `Could not resolve item "${req.name}"${req.type ? ` (type ${req.type})` : ''} in the WoD compendiums; nothing was added.`,
+            // Forward pointer, not just a refusal: an item no pack contains (an
+            // Ability a splat template does not seed, for instance) lands here,
+            // and the caller then needs to know that creating it from scratch is
+            // possible — it just lives on a different tool.
+            error:
+              `Could not resolve item "${req.name}"${req.type ? ` (type ${req.type})` : ''} in the WoD compendiums; nothing was added. ` +
+              `If no pack contains it, create it directly instead: manage-actors ` +
+              `{ action: "create-items", actorIdentifier, items: [{ name, type, system }] } ` +
+              `(equivalently manage-world-items { action: "add-to-actor" }).`,
           };
         }
 

@@ -174,6 +174,61 @@ describe('extractFullSheet', () => {
     expect(full.allItems.Sphere.length).toBe(9);
     expect(full.capabilities.hasspheres).toBe(true);
   });
+
+  // ── art + provenance (additive) ────────────────────────────────────────────
+
+  it('reports the real fixtures’ placeholder portraits as default, not as "has an image"', () => {
+    // Both real exports carry img = icons/svg/mystery-man.svg, i.e. exactly the
+    // case where the legacy `hasImage: !!img` said "true" about an actor that has
+    // no portrait at all.
+    const full = extractFullSheet(mage);
+    expect(full.img).toBe('icons/svg/mystery-man.svg');
+    expect(full.isDefaultImg).toBe(true);
+    expect(extractFullSheet(mortal).isDefaultImg).toBe(true);
+  });
+
+  it('passes a real portrait through untouched', () => {
+    const full = extractFullSheet({ ...mage, img: 'wod20-portraits/lena.webp' });
+    expect(full.img).toBe('wod20-portraits/lena.webp');
+    expect(full.isDefaultImg).toBe(false);
+  });
+
+  it('surfaces prototypeToken and flags only when the payload carries them', () => {
+    // A bridge response omits both unless the caller used `include`, so the sheet
+    // must not fabricate them — an empty object would read as "this actor has no
+    // provenance", which is a different claim from "I was not told".
+    const noExtras = { ...mage };
+    delete noExtras.prototypeToken;
+    delete noExtras.flags;
+    const bare = extractFullSheet(noExtras);
+    expect('prototypeToken' in bare).toBe(false);
+    expect('flags' in bare).toBe(false);
+
+    const withExtras = extractFullSheet({
+      ...mage,
+      prototypeToken: { texture: { src: 'wod20-tokens/lena.webp', scaleX: 1 } },
+      flags: { wodchar: { sourceId: 'berlin-lena' } },
+    });
+    expect(withExtras.prototypeToken.texture.src).toBe('wod20-tokens/lena.webp');
+    expect(withExtras.flags.wodchar.sourceId).toBe('berlin-lena');
+  });
+
+  it('adds embedded item ids on request, reading either id or _id', () => {
+    const withIds = extractFullSheet(mage, { includeItemIds: true });
+    expect(withIds.allItems.Ability[0].id).toBe(mage.items[0]._id);
+    expect(withIds.allItems.Ability[0].name).toBe(mage.items[0].name);
+
+    const without = extractFullSheet(mage);
+    expect('id' in without.allItems.Ability[0]).toBe(false);
+  });
+
+  it('keeps every previously-returned field name and value', () => {
+    const full = extractFullSheet(mage);
+    const stats = extractCharacterStats(mage);
+    for (const [key, value] of Object.entries(stats)) {
+      expect(full[key]).toEqual(value);
+    }
+  });
 });
 
 describe('adapter delegation', () => {
@@ -181,6 +236,24 @@ describe('adapter delegation', () => {
     const viaAdapter = adapter.extractCharacterStats(vampire);
     const direct = extractCharacterStats(vampire);
     expect(viaAdapter).toEqual(direct);
+  });
+
+  it('formatCreatureForList adds the real img next to the unchanged hasImage flag', () => {
+    const idx: any = {
+      id: 'c1',
+      name: 'Familiar',
+      type: 'PC',
+      packName: 'p',
+      packLabel: 'P',
+      img: 'wod20-portraits/familiar.webp',
+    };
+    const listed = adapter.formatCreatureForList(idx);
+    expect(listed.hasImage).toBe(true);
+    expect(listed.img).toBe('wod20-portraits/familiar.webp');
+
+    const noArt = adapter.formatCreatureForList({ ...idx, img: undefined });
+    expect('hasImage' in noArt).toBe(false);
+    expect('img' in noArt).toBe(false);
   });
 
   it('getPowerLevel reads systemData.powerLevel', () => {

@@ -46,6 +46,12 @@ export const CharacterInfoSchema = z.object({
   name: z.string(),
   type: z.string(),
   img: z.string().optional(),
+  // Opt-in extras from the `getCharacterInfo` query's `include` array. Optional,
+  // so a response from a module that does not send them still validates.
+  // Mirrors CharacterInfo in ./types.ts — keep the two in step.
+  flags: z.record(z.unknown()).optional(),
+  prototypeToken: z.record(z.unknown()).optional(),
+  included: z.array(z.string()).optional(),
   system: z.record(z.unknown()),
   items: z.array(CharacterItemSchema),
   effects: z.array(CharacterEffectSchema),

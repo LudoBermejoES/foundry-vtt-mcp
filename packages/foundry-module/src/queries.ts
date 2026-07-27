@@ -87,6 +87,10 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.findPlayers`] = this.handleFindPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.findActor`] = this.handleFindActor.bind(this);
 
+    // Read-only reverse lookup by document flag (e.g. flags.wodchar.sourceId).
+    // The read path that the import's idempotency key used to lack.
+    CONFIG.queries[`${modulePrefix}.findActorsByFlag`] = this.handleFindActorsByFlag.bind(this);
+
     // WFRP4e actor stat-block update
     CONFIG.queries[`${modulePrefix}.updateWfrp4eActor`] = this.handleUpdateWfrp4eActor.bind(this);
     CONFIG.queries[`${modulePrefix}.addWfrp4eItems`] = this.handleAddWfrp4eItems.bind(this);
@@ -203,6 +207,12 @@ export class QueryHandlers {
   private async handleGetCharacterInfo(data: {
     characterName?: string;
     characterId?: string;
+    /**
+     * Additive, opt-in extras: 'flags' and/or 'prototypeToken'. Absent, the
+     * response is byte-identical to before this option existed, so an old server
+     * against a new module sees no change. See DataAccess.getCharacterInfo.
+     */
+    include?: string[];
   }): Promise<any> {
     try {
       // SECURITY: Silent GM validation
@@ -218,7 +228,10 @@ export class QueryHandlers {
         throw new Error('characterName or characterId is required');
       }
 
-      return await this.dataAccess.getCharacterInfo(identifier);
+      return await this.dataAccess.getCharacterInfo(
+        identifier,
+        Array.isArray(data.include) ? { include: data.include } : undefined
+      );
     } catch (error) {
       throw new Error(
         `Failed to get character info: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -411,6 +424,14 @@ export class QueryHandlers {
         'importActors.perActorResults',
         'importActors.dryRun',
         'importActors.stopOnError',
+        // Read path (0.9.3). `getCharacterInfo.include` matters for the same
+        // reason `dryRun` does: an old module silently DROPS the `include` array
+        // and returns a response with no `flags` — which a caller would read as
+        // "this actor carries no sourceId" rather than "I could not tell".
+        // Absence of provenance is not the same claim as absence of the field,
+        // so the server pre-flights this and refuses instead of guessing.
+        'getCharacterInfo.include',
+        'findActorsByFlag',
       ],
     };
   }
@@ -1036,6 +1057,40 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to find actor: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle "find actors by flag" request — read-only reverse lookup used by
+   * `worldofdarkness-find-actors` to map external source ids to Foundry ids.
+   *
+   * GM-gated like every other actor query: a flag lookup can enumerate actors a
+   * player cannot see.
+   */
+  private async handleFindActorsByFlag(data: {
+    flagPath: string;
+    values?: string[];
+    exists?: boolean;
+    type?: string;
+  }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data?.flagPath) {
+        throw new Error('flagPath is required');
+      }
+
+      return await this.dataAccess.findActorsByFlag(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to find actors by flag: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

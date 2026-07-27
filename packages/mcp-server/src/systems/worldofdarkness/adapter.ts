@@ -117,7 +117,13 @@ export class WorldOfDarknessAdapter implements SystemAdapter {
       if (Object.keys(stats).length > 0) formatted.stats = stats;
     }
 
-    if (creature.img) formatted.hasImage = true;
+    // `hasImage` is left exactly as it was (emitted only when truthy) and the real
+    // path is added alongside it — see utils/actor-art.ts for why the boolean
+    // alone is not enough.
+    if (creature.img) {
+      formatted.hasImage = true;
+      formatted.img = creature.img;
+    }
 
     return formatted;
   }

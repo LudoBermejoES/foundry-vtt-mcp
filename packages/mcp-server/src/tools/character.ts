@@ -4,6 +4,7 @@ import { Logger } from '../logger.js';
 import { SystemRegistry } from '../systems/system-registry.js';
 import { detectGameSystem, getCachedSystemId, type GameSystem } from '../utils/system-detection.js';
 import type { SystemAdapter } from '../systems/types.js';
+import { artFields } from '../utils/actor-art.js';
 
 export interface CharacterToolsOptions {
   foundryClient: FoundryClient;
@@ -62,7 +63,7 @@ export class CharacterTools {
       {
         name: 'get-character',
         description:
-          'Retrieve character information optimized for minimal token usage. Returns: full stats (abilities, skills, saves, AC, HP), action names, active effects/conditions (name only), and ALL items with minimal metadata (name, type, equipped status) without descriptions. PF2e-specific: includes traits arrays for items/actions, action costs, rarity, and level. D&D 5e-specific: includes attunement status. Perfect for filtering (e.g., "deviant" trait feats, "fire" trait spells in PF2e), checking equipment, or identifying what to investigate further. Use get-character-entity to fetch full details for specific items, actions, spells, or effects.',
+          'Retrieve character information optimized for minimal token usage. Returns: full stats (abilities, skills, saves, AC, HP), action names, active effects/conditions (name only), and ALL items with minimal metadata (name, type, equipped status) without descriptions. PF2e-specific: includes traits arrays for items/actions, action costs, rarity, and level. D&D 5e-specific: includes attunement status. Perfect for filtering (e.g., "deviant" trait feats, "fire" trait spells in PF2e), checking equipment, or identifying what to investigate further. Use get-character-entity to fetch full details for specific items, actions, spells, or effects. Art: returns the real portrait path as "img" plus "isDefaultImg" (true when there is no portrait or it is still Foundry\'s placeholder). The legacy "hasImage" boolean is DEPRECATED — it is true even for the placeholder; prefer "img" / "isDefaultImg".',
         inputSchema: {
           type: 'object',
           properties: {
@@ -96,7 +97,11 @@ export class CharacterTools {
       },
       {
         name: 'list-characters',
-        description: 'List all available characters with basic information',
+        description:
+          'List all available characters with basic information. Each entry carries the real ' +
+          'portrait path as "img" (absent when the actor has none) plus "isDefaultImg". The ' +
+          'legacy "hasImage" boolean is DEPRECATED — it is true even for Foundry\'s ' +
+          'mystery-man placeholder, so it cannot tell a real portrait from a missing one.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -392,7 +397,11 @@ export class CharacterTools {
           quantity: entity.system?.quantity || 1,
           equipped: entity.system?.equipped,
           attunement: entity.system?.attunement,
+          // `hasImage` is unchanged (callers may depend on its truthiness); the
+          // real path and the meaningful placeholder test are additive. See
+          // utils/actor-art.ts.
           hasImage: !!entity.img,
+          ...artFields(entity.img),
           // Include full system data for advanced use cases
           system: entity.system,
         };
@@ -449,7 +458,11 @@ export class CharacterTools {
           id: actor.id,
           name: actor.name,
           type: actor.type,
+          // `hasImage` kept verbatim; `img` / `isDefaultImg` added alongside so a
+          // portrait can be verified without placing a token on a scene. The
+          // module has always SENT `img` here — only this formatter dropped it.
           hasImage: !!actor.img,
+          ...artFields(actor.img),
         })),
         total: actors.length,
         filtered: type ? `Filtered by type: ${type}` : 'All characters',
@@ -669,7 +682,16 @@ export class CharacterTools {
 
   async handleManageWorldItems(args: any): Promise<any> {
     const { action } = z
-      .object({ action: z.enum(['create', 'list', 'update', 'add-to-actor', 'remove-from-actor', 'describe']) })
+      .object({
+        action: z.enum([
+          'create',
+          'list',
+          'update',
+          'add-to-actor',
+          'remove-from-actor',
+          'describe',
+        ]),
+      })
       .parse(args);
 
     switch (action) {
@@ -792,7 +814,9 @@ export class CharacterTools {
       stats: await this.extractStats(characterData),
       items: this.formatItems(characterData.items || []),
       effects: this.formatEffects(characterData.effects || []),
+      // `hasImage` unchanged; real art path added alongside (utils/actor-art.ts).
       hasImage: !!characterData.img,
+      ...artFields(characterData.img),
     };
 
     // Add actions with minimal data (name, traits, action cost only - no variants)

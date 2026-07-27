@@ -5,9 +5,20 @@
  * Works with any game system and any actor type — no hardcoded types.
  *
  * Actor actions:  create, update, delete
- * Item actions:   update-items, delete-items  (embedded items on an actor)
+ * Item actions:   create-items, update-items, delete-items  (embedded items on an actor)
  * Listing actors is handled by the existing list-characters tool.
- * Adding items is handled by manage-world-items → add-to-actor.
+ *
+ * `create-items` is a THIN ALIAS: it forwards to the very same
+ * `foundry-mcp-bridge.addActorItems` query that `manage-world-items`
+ * (action: "add-to-actor") and `worldofdarkness-add-items` already use. There is
+ * no new module query and no second code path to keep in sync, and the existing
+ * paths are untouched.
+ *
+ * It exists because this comment used to be the ONLY place the create path was
+ * documented — the tool description advertised update-items / delete-items and
+ * nothing else, so an agent that correctly reached for `manage-actors` to repair
+ * embedded items found two thirds of CRUD and reasonably concluded that creating
+ * one was impossible. A capability documented only in source is not discoverable.
  */
 
 import { z } from 'zod';
@@ -50,6 +61,10 @@ export class ActorManagementTools {
           '- "create": Create one or more actors of any type with arbitrary system data.\n' +
           '- "update": Update one or more existing actors by ID. Merges into existing system data.\n' +
           '- "delete": Permanently delete one or more actors by ID.\n' +
+          '- "create-items": Add NEW embedded items to an existing actor (name + type + arbitrary\n' +
+          '  system data). Same operation as manage-world-items action:"add-to-actor"; use either.\n' +
+          '  For World of Darkness you can instead use worldofdarkness-add-items to copy items by\n' +
+          '  name out of the wod20-compendium-es packs.\n' +
           '- "update-items": Update embedded items on an actor by item ID.\n' +
           '- "delete-items": Delete embedded items from an actor by item ID.\n' +
           '- "describe": Return system-specific actor schema notes (actor types, item restrictions,\n' +
@@ -59,10 +74,18 @@ export class ActorManagementTools {
           properties: {
             action: {
               type: 'string',
-              enum: ['create', 'update', 'delete', 'update-items', 'delete-items', 'describe'],
+              enum: [
+                'create',
+                'update',
+                'delete',
+                'create-items',
+                'update-items',
+                'delete-items',
+                'describe',
+              ],
               description:
                 'Operation to perform: "create" / "update" / "delete" actors, ' +
-                '"update-items" / "delete-items" for embedded items, ' +
+                '"create-items" / "update-items" / "delete-items" for embedded items, ' +
                 'or "describe" to get system-specific schema notes.',
             },
             // ── create ──────────────────────────────────────────────────────
@@ -146,10 +169,37 @@ export class ActorManagementTools {
               minItems: 1,
               description: 'Required for "delete". IDs of the actors to delete.',
             },
-            // ── update-items ─────────────────────────────────────────────────
+            // ── create-items / update-items / delete-items ───────────────────
             actorIdentifier: {
               type: 'string',
-              description: 'Required for "update-items" and "delete-items". Actor name or ID.',
+              description:
+                'Required for "create-items", "update-items" and "delete-items". Actor name or ID.',
+            },
+            items: {
+              type: 'array',
+              minItems: 1,
+              description:
+                'Required for "create-items". New embedded items to add to the actor. ' +
+                'Identical shape to manage-world-items action:"add-to-actor".',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: 'Display name of the item.' },
+                  type: {
+                    type: 'string',
+                    description:
+                      'Item type valid for the active system (e.g. "Ability", "Power", "Feature").',
+                  },
+                  img: { type: 'string', description: 'Optional icon path.' },
+                  system: {
+                    type: 'object',
+                    additionalProperties: true,
+                    description:
+                      'System-specific data. Free-form — use action:"describe" for valid fields.',
+                  },
+                },
+                required: ['name', 'type'],
+              },
             },
             itemUpdates: {
               type: 'array',
@@ -190,7 +240,15 @@ export class ActorManagementTools {
   async handleManageActors(args: any): Promise<any> {
     const { action } = z
       .object({
-        action: z.enum(['create', 'update', 'delete', 'update-items', 'delete-items', 'describe']),
+        action: z.enum([
+          'create',
+          'update',
+          'delete',
+          'create-items',
+          'update-items',
+          'delete-items',
+          'describe',
+        ]),
       })
       .parse(args);
 
@@ -201,6 +259,8 @@ export class ActorManagementTools {
         return this.handleUpdate(args);
       case 'delete':
         return this.handleDelete(args);
+      case 'create-items':
+        return this.handleCreateItems(args);
       case 'update-items':
         return this.handleUpdateItems(args);
       case 'delete-items':
@@ -302,6 +362,53 @@ export class ActorManagementTools {
     this.logger.info('Deleting actors', { count: ids.length });
 
     const result = await this.foundryClient.query('foundry-mcp-bridge.deleteActors', { ids });
+
+    return result;
+  }
+
+  // ── create-items ────────────────────────────────────────────────────────────
+  //
+  // A thin alias over `foundry-mcp-bridge.addActorItems` — the SAME query
+  // `manage-world-items` action:"add-to-actor" and `worldofdarkness-add-items`
+  // already send, with the same payload. Nothing about those paths changes; this
+  // only makes the capability visible from the surface that already offers
+  // update-items / delete-items.
+
+  private async handleCreateItems(args: any): Promise<any> {
+    const schema = z.object({
+      actorIdentifier: z.string().min(1),
+      items: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            type: z.string().min(1),
+            img: z.string().optional(),
+            system: z.record(z.any()).optional(),
+          })
+        )
+        .min(1),
+    });
+
+    const { actorIdentifier, items } = schema.parse(args);
+
+    this.logger.info('Creating actor embedded items', {
+      actorIdentifier,
+      count: items.length,
+    });
+
+    // Same normalization the "create" action applies, so an item created here and
+    // one created via manage-world-items land identically.
+    const adapter = await this.getAdapter();
+    const normalizedItems = adapter?.normalizePayload
+      ? items.map(i =>
+          i.system !== undefined ? { ...i, system: adapter.normalizePayload!(i.system) } : i
+        )
+      : items;
+
+    const result = await this.foundryClient.query('foundry-mcp-bridge.addActorItems', {
+      actorIdentifier,
+      items: normalizedItems,
+    });
 
     return result;
   }

@@ -15,6 +15,19 @@ interface CharacterInfo {
   name: string;
   type: string;
   img?: string;
+  /**
+   * Opt-in (`include: ['flags']`). Absent unless requested, so default
+   * responses stay the size they have always been.
+   *
+   * MIRROR WARNING: these types are duplicated, not shared. The same two fields
+   * exist in `shared/src/types.ts` (`CharacterInfo`) and are consumed on the
+   * server in `systems/worldofdarkness/extract.ts`. Change one, change all.
+   */
+  flags?: Record<string, unknown>;
+  /** Opt-in (`include: ['prototypeToken']`). The token ART, curated — see extractTokenArt. */
+  prototypeToken?: Record<string, unknown>;
+  /** Echo of the `include` keys the module actually honoured. See getCharacterInfo. */
+  included?: string[];
   system: Record<string, unknown>;
   items: CharacterItem[];
   effects: CharacterEffect[];
@@ -335,9 +348,29 @@ export class FoundryDataAccess {
   }
 
   /**
-   * Get character/actor information by name or ID
+   * Get character/actor information by name or ID.
+   *
+   * `options.include` is additive and opt-in. Absent (or empty), the response is
+   * byte-identical to what this method returned before the option existed, so an
+   * OLD server talking to a NEW module is unaffected. Supported keys:
+   *
+   *   - `flags`          → `flags`, the actor's raw flag object (provenance, e.g.
+   *                        `flags.wodchar.sourceId`). Read WITHOUT `getFlag()` —
+   *                        see the note on `readActorFlags`.
+   *   - `prototypeToken` → `prototypeToken`, the curated token ART (texture src +
+   *                        scale, ring, name, actorLink). This is the only way to
+   *                        see an actor's token art WITHOUT a token placed on a
+   *                        scene, which `get-token-details` requires.
+   *
+   * The response also carries `included`: the keys actually honoured. A NEW
+   * server can therefore tell "the actor genuinely has no flags" apart from "the
+   * module is too old to know what `include` means" — the difference between a
+   * fact and a silent lie about provenance.
    */
-  async getCharacterInfo(identifier: string): Promise<CharacterInfo> {
+  async getCharacterInfo(
+    identifier: string,
+    options?: { include?: string[] }
+  ): Promise<CharacterInfo> {
     let actor: Actor | undefined;
 
     // Try to find by ID first, then by name
@@ -391,6 +424,26 @@ export class FoundryDataAccess {
         };
       }),
     };
+
+    // ── Opt-in extras (art + provenance). Nothing here runs unless the caller
+    // asked, so the default response shape is unchanged.
+    const requestedInclude = options?.include;
+    const include = Array.isArray(requestedInclude) ? requestedInclude : [];
+    if (include.length > 0) {
+      const honoured: string[] = [];
+      if (include.includes('flags')) {
+        characterData.flags = this.readActorFlags(actor);
+        honoured.push('flags');
+      }
+      if (include.includes('prototypeToken')) {
+        const art = this.extractTokenArt(actor);
+        if (art !== null) characterData.prototypeToken = art;
+        // Honoured even when the actor has no prototypeToken — the caller learns
+        // "asked and answered: there is none", not "the module ignored me".
+        honoured.push('prototypeToken');
+      }
+      characterData.included = honoured;
+    }
 
     // Add PF2e-specific data if available
     const actorAny = actor as any;
@@ -2371,6 +2424,75 @@ export class FoundryDataAccess {
    */
   async listActors(): Promise<Array<{ id: string; name: string; type: string; img?: string }>> {
     return this.actorDirectory.listActors();
+  }
+
+  /**
+   * Find actors carrying a flag at a dotted path (read-only). See
+   * ActorDirectory.findActorsByFlag — including why the flag must NOT be read
+   * with `actor.getFlag()`.
+   */
+  async findActorsByFlag(data: {
+    flagPath: string;
+    values?: string[];
+    exists?: boolean;
+    type?: string;
+  }): Promise<{
+    matches: Array<{
+      id: string;
+      name: string;
+      type: string;
+      img?: string;
+      folder: string | null;
+      flagValue: string;
+    }>;
+    total: number;
+  }> {
+    return this.actorDirectory.findActorsByFlag(data);
+  }
+
+  /**
+   * The actor's flag object, sanitized for transport.
+   *
+   * Read via `foundry.utils.getProperty(actor, 'flags')` / raw property access —
+   * NEVER `actor.getFlag(scope, key)`, which throws for any scope that is not
+   * core / the system id / the world id / an active module id. `wodchar` (the
+   * scope the importer stamps `sourceId` under) is none of those, so `getFlag`
+   * would throw on exactly the actors this exists to inspect. Same rule as
+   * `importActors`' `findBySourceId`.
+   */
+  private readActorFlags(actor: Actor): Record<string, unknown> {
+    const getProperty = (foundry as any)?.utils?.getProperty;
+    const raw = getProperty ? getProperty(actor, 'flags') : (actor as any)?.flags;
+    const sanitized = this.sanitizeData(raw ?? {});
+    return sanitized && typeof sanitized === 'object' ? sanitized : {};
+  }
+
+  /**
+   * The actor's prototype-token ART, curated to the fields that answer "did the
+   * token image survive the import?" — the full prototypeToken is large and
+   * mostly vision/bar configuration nobody reads.
+   *
+   * `prototypeToken` is a DataModel, so it is converted with `toObject()` first;
+   * `Object.keys()` on the live model does not necessarily expose schema fields.
+   */
+  private extractTokenArt(actor: Actor): Record<string, unknown> | null {
+    const proto = (actor as any)?.prototypeToken;
+    if (!proto) return null;
+    const obj: any =
+      typeof proto.toObject === 'function' ? proto.toObject(false) : this.sanitizeData(proto);
+    if (!obj || typeof obj !== 'object') return null;
+    const texture = obj.texture ?? {};
+    const art: Record<string, unknown> = {
+      texture: {
+        src: texture.src ?? null,
+        ...(texture.scaleX !== undefined ? { scaleX: texture.scaleX } : {}),
+        ...(texture.scaleY !== undefined ? { scaleY: texture.scaleY } : {}),
+      },
+    };
+    if (obj.name !== undefined) art.name = obj.name;
+    if (obj.actorLink !== undefined) art.actorLink = obj.actorLink;
+    if (obj.ring !== undefined && obj.ring !== null) art.ring = this.sanitizeData(obj.ring);
+    return art;
   }
 
   /**

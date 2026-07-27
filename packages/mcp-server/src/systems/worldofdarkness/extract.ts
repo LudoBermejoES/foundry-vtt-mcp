@@ -16,6 +16,8 @@
  * be missing whole sections.
  */
 
+import { artFields } from '../../utils/actor-art.js';
+
 /** Splat → power-trait descriptor. `flag`, when set, gates emission on that `has*` setting. */
 const SPLAT_POWER_TRAIT: Record<string, { id: string; name: string; flag?: string }> = {
   mage: { id: 'arete', name: 'Arete', flag: 'hasspheres' },
@@ -172,18 +174,49 @@ export function extractCharacterStats(actorData: any): any {
   return stats;
 }
 
+/** Options for {@link extractFullSheet}. All additive; omitting them reproduces the old output. */
+export interface FullSheetOptions {
+  /**
+   * Attach each embedded item's Foundry `id` in `allItems`. Off by default: the
+   * ids are pure noise on a 100-item sheet, but without them the sheet cannot
+   * feed `manage-actors` `update-items` / `delete-items` without a second read.
+   */
+  includeItemIds?: boolean;
+}
+
 /**
  * Superset of {@link extractCharacterStats}: adds a complete grouped dump of ALL
  * embedded items (name, type, system.type, rating) for audit/export. Read-only.
+ *
+ * ART AND PROVENANCE (additive — no previously-returned field changes name or
+ * meaning):
+ *   - `id`             always. Its absence used to force a second `findActor`
+ *                      round-trip for anything wanting to act on what it read.
+ *   - `img`            always when the actor has one — the REAL path.
+ *   - `isDefaultImg`   always. The meaningful version of `hasImage`.
+ *   - `prototypeToken` when the module was asked for it (`include`) — this is the
+ *                      only way to see token art WITHOUT a token on a scene.
+ *   - `flags`          when the module was asked for it — carries
+ *                      `flags.wodchar.sourceId`, so provenance is readable
+ *                      without using a write path as a read probe.
+ *
+ * `prototypeToken` / `flags` are copied from the actor payload only when the
+ * module actually sent them. They are never defaulted to `{}`: an empty object
+ * would be indistinguishable from "the actor has no flags", which is a different
+ * (and false) claim. The caller learns which extras were honoured from
+ * `actorData.included`, echoed by the module.
  */
-export function extractFullSheet(actorData: any): any {
+export function extractFullSheet(actorData: any, options?: FullSheetOptions): any {
   const base = extractCharacterStats(actorData);
   const items = Array.isArray(actorData?.items) ? actorData.items : [];
+  const withItemIds = options?.includeItemIds === true;
 
   const allItems: Record<string, any[]> = {};
   for (const it of items) {
     const bucket = it?.type ?? 'Unknown';
     (allItems[bucket] ??= []).push({
+      // Live bridge payloads carry `id`; a raw exported document carries `_id`.
+      ...(withItemIds ? { id: it?.id ?? it?._id ?? null } : {}),
       name: it?.name,
       type: it?.type,
       systemType: it?.system?.type ?? null,
@@ -193,6 +226,15 @@ export function extractFullSheet(actorData: any): any {
 
   return {
     ...base,
+    ...(actorData?.id || actorData?._id ? { id: actorData.id ?? actorData._id } : {}),
+    // The placeholder test lives in exactly one place for every read formatter.
+    ...artFields(actorData?.img),
+    ...(actorData?.prototypeToken !== undefined && actorData.prototypeToken !== null
+      ? { prototypeToken: actorData.prototypeToken }
+      : {}),
+    ...(actorData?.flags !== undefined && actorData.flags !== null
+      ? { flags: actorData.flags }
+      : {}),
     capabilities: getCapabilityFlags(actorData),
     allItems,
   };

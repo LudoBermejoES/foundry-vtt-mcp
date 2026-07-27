@@ -45,12 +45,22 @@ are all embedded `items[]`:
 | `worldofdarkness-search-content` | Search the `wod20-compendium-es` Item packs (dynamic discovery)                                             | `searchCompendium` (packType Item) |
 | `worldofdarkness-add-items`      | Embed compendium Items onto an actor (all-or-nothing)                                                       | `addActorItems`                    |
 | `worldofdarkness-create-actor`   | Create a splat actor with the right `system.settings` flags                                                 | `createActors`                     |
-| `worldofdarkness-get-sheet`      | Full structured splat sheet (read-only)                                                                     | `getCharacterInfo`                 |
+| `worldofdarkness-get-sheet`      | Full structured splat sheet + art paths, and `flags` / `prototypeToken` / item ids on `include` (read-only) | `getCharacterInfo` (`include`)     |
+| `worldofdarkness-import-actor`   | Create/update actors from full exported Actor JSON (chunked, per-actor results, `dryRun`)                   | `importActors`                     |
+| `worldofdarkness-find-actors`    | Map external source ids (`flags.wodchar.sourceId`) to Foundry actor ids; reports unmatched + duplicates     | `findActorsByFlag` (new)           |
 
-Only `roll-pool` required a new browser-side handler (`rollDice` in `foundry-module`); the rest reuse
-existing generic module primitives.
+`roll-pool` and `find-actors` are the only tools that required a new browser-side handler (`rollDice`
+and `findActorsByFlag` in `foundry-module`); the rest reuse existing generic module primitives.
+`get-sheet`'s `include: ['flags','prototypeToken']` extends an existing handler rather than adding one.
+
+**Server/module skew.** The server bundle and the Foundry module deploy independently, so a new server
+routinely talks to an old module. Anything whose absence would read as a FACT is pre-flighted against
+the capability list `handlePing` advertises and refused if unsupported, never answered with a guess:
+`import-actor`'s `dryRun` (`importActors.dryRun`), `get-sheet`'s `include`
+(`getCharacterInfo.include`), and `find-actors` itself (`findActorsByFlag`). Module 0.9.3+ for the
+last two.
 
 ## Registration
 
-`backend.ts`: `systemRegistry.register(new WorldOfDarknessAdapter())`, plus the 7 tool classes in
+`backend.ts`: `systemRegistry.register(new WorldOfDarknessAdapter())`, plus the 9 tool classes in
 `allTools` + the dispatch `switch`. See `IMPLEMENTATION_NOTES.md` for the full design record.

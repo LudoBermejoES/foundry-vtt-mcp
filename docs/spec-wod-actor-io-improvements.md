@@ -848,3 +848,72 @@ Following the precedent spec's §6 — recorded so it is not rediscovered:
   affects **every** tool with a large payload and is not fixed here. Fixing it means
   porting the module's chunking loop into `sendMessage` and, at minimum, rethrowing
   the send error.
+
+---
+
+## 10. What shipped for Items 2–5 (the read path) — module 0.9.3
+
+Recorded so the sections above are not read as unbuilt design. Items 1 and 6 shipped
+earlier (see §8 Q1); Items 2, 3, 4 and 5 shipped here. Where the implementation
+diverges from the proposal above, the divergence is stated, not smoothed over.
+
+### As proposed
+
+- **2a / 3c** `getCharacterInfo` takes an optional `include: string[]`
+  (`data-access.ts` `getCharacterInfo`, threaded from `queries.ts`
+  `handleGetCharacterInfo`). `flags` attaches the sanitized flag object read by RAW
+  property access (`readActorFlags`); `prototypeToken` attaches curated token art
+  (`extractTokenArt`). Absent `include`, the response is byte-identical to before.
+- **2b** `flags` / `prototypeToken` / `included` added to the local `CharacterInfo`
+  in the module **and** to `shared/src/types.ts` + `schemas.ts`. The types are
+  duplicated, not shared at runtime; each copy carries a mirror warning.
+- **2d / 3b** `extractFullSheet` now emits `id`, `img` and `isDefaultImg`
+  unconditionally, and `flags` / `prototypeToken` when the payload carries them.
+- **3a** `img` + `isDefaultImg` added beside the untouched `hasImage` in
+  `list-characters`, `get-character` and `get-character-entity` (`character.ts`),
+  and beside `hasImage` in the WoD adapter's `formatCreatureForList`.
+- **3d** `hasImage` is unchanged in value and meaning and marked DEPRECATED in the
+  `list-characters` / `get-character` descriptions only.
+- **4** `worldofdarkness-find-actors` over the new `findActorsByFlag` query
+  (`actor-directory.ts`), GM-gated in `queries.ts` like every other actor query.
+- **4.3** `get-sheet`'s `.strict()` schema gains `include`, with `itemIds` answered
+  entirely server-side.
+- **5** `manage-actors` gains `create-items` as a thin alias over the existing
+  `addActorItems` query, plus the description fix; the misleading source-only
+  comment at the top of `actor-management.ts` now explains itself.
+
+### Divergences from §4
+
+1. **`unmatched` / `duplicates` are computed on the SERVER**, not returned by the
+   module. `findActorsByFlag` returns `{ matches, total }` only; `find-actors.ts`
+   derives the other two from the matches and the caller's `values`. One
+   implementation instead of two, the module stays a dumb lookup, and the
+   derivation is unit-testable without a fake Foundry world.
+2. **The `include` response carries `included`** — the keys the module actually
+   honoured — which §4.6 did not specify. Without it, "no `flags` in the response"
+   from an old module is indistinguishable from "this actor has no flags". One is
+   a fact about the world; the other is a fact about the deploy.
+3. **`prototypeToken` is curated, not passed through whole.** Only
+   `texture.{src,scaleX,scaleY}`, `name`, `actorLink` and `ring` — the fields that
+   answer "did the token art survive?". The full prototypeToken is mostly vision
+   and bar configuration and would dominate the sheet.
+4. **`isDefaultImg` lives in one place for every formatter**
+   (`utils/actor-art.ts`), not re-derived per call site as §3b's per-tool wording
+   implied.
+5. **The skew guard was extended beyond `dryRun`.** `get-sheet`'s module-answered
+   `include` and `find-actors` are both pre-flighted against `handlePing`'s
+   capability list (`getCharacterInfo.include`, `findActorsByFlag`) and REFUSED
+   against an older module. A sheet read that quietly omits `flags` would let a
+   caller conclude an imported actor carries no `sourceId` — precisely the
+   wrong-but-plausible answer the `dryRun` precedent exists to prevent. A plain
+   `get-sheet` call (no `include`) still works against any module version and still
+   returns `img`.
+
+### Not done, deliberately
+
+- `get-character` was **not** given an `include` for `prototypeToken`. It is the
+  generic cross-system read tool; this delta is the WoD surface, and `get-sheet` is
+  the tool a WoD caller reaches for (§2 Item 3's own note). Actor `img` is exposed
+  there regardless, which is what the token-less-actor scenario needs.
+- §9's `find()` debt is unchanged: `find-actors` now REPORTS a duplicated
+  `sourceId` in `duplicates`, but the import still resolves to the first hit.

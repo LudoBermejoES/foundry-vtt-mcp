@@ -22,6 +22,20 @@ export interface CharacterInfo {
   name: string;
   type: string;
   img?: string;
+  /**
+   * Opt-in via the `getCharacterInfo` query's `include: ['flags']`. Carries
+   * document provenance, e.g. `flags.wodchar.sourceId`.
+   *
+   * MIRROR WARNING: this shape is DUPLICATED, not shared at runtime — the module
+   * has its own copy in `packages/foundry-module/src/data-access.ts` and the
+   * server consumes it in `systems/worldofdarkness/extract.ts`. Editing one copy
+   * only is a latent skew bug (it compiles fine and drifts silently).
+   */
+  flags?: Record<string, unknown>;
+  /** Opt-in via `include: ['prototypeToken']`. Curated token art (texture src/scale, ring). */
+  prototypeToken?: Record<string, unknown>;
+  /** Echo of the `include` keys the module honoured — absent from an older module. */
+  included?: string[];
   system: Record<string, unknown>;
   items: CharacterItem[];
   effects: CharacterEffect[];
