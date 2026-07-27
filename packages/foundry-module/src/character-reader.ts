@@ -115,3 +115,566 @@ interface CharacterEffect {
     remaining?: number;
   };
 }
+
+export class CharacterReader {
+  constructor() {}
+
+  /**
+   * Extract spellcasting data from an actor (supports PF2e, D&D 5e, DSA5, and WFRP4e)
+   */
+  extractSpellcastingData(actor: Actor): SpellcastingEntry[] {
+    const entries: SpellcastingEntry[] = [];
+    const actorAny = actor as any;
+    const systemId = (game.system as any).id;
+
+    // Get all spell items from the actor
+    const spellItems = actor.items.filter(item => item.type === 'spell');
+
+    if (systemId === 'pf2e') {
+      // PF2e: Extract from spellcastingEntries
+      const spellcastingEntries =
+        actorAny.spellcasting?.contents ||
+        actorAny.items?.filter((i: any) => i.type === 'spellcastingEntry') ||
+        [];
+
+      for (const entry of spellcastingEntries) {
+        const entryData = entry.system || entry;
+        const entrySpells: SpellInfo[] = [];
+
+        // Get spells associated with this entry
+        // In PF2e, spells have a location property pointing to their spellcasting entry
+        const entryId = entry.id;
+        const associatedSpells = spellItems.filter((spell: any) => {
+          const spellSystem = spell.system;
+          return spellSystem?.location?.value === entryId || spellSystem?.location === entryId;
+        });
+
+        for (const spell of associatedSpells) {
+          const spellSystem = spell.system as any;
+          const targeting = this.extractPF2eSpellTargeting(spellSystem);
+          entrySpells.push({
+            id: spell.id || '',
+            name: spell.name || '',
+            level: spellSystem?.level?.value ?? spellSystem?.rank ?? 0,
+            prepared: spellSystem?.location?.prepared ?? true,
+            expended: spellSystem?.location?.expended ?? false,
+            traits: spellSystem?.traits?.value || [],
+            actionCost: this.formatPF2eActionCost(spellSystem?.time?.value),
+            range: targeting.range,
+            target: targeting.target,
+            area: targeting.area,
+          });
+        }
+
+        // Also check for spells in the entry's spell collection
+        if (entry.spells) {
+          for (const [levelKey, levelData] of Object.entries(entry.spells as Record<string, any>)) {
+            const spellsAtLevel = levelData?.value || levelData || [];
+            if (Array.isArray(spellsAtLevel)) {
+              for (const spellRef of spellsAtLevel) {
+                // Skip if we already have this spell
+                if (entrySpells.some(s => s.id === spellRef.id)) continue;
+
+                const spellItem = actor.items.get(spellRef.id || spellRef);
+                if (spellItem) {
+                  const spellSystem = spellItem.system as any;
+                  const targeting = this.extractPF2eSpellTargeting(spellSystem);
+                  entrySpells.push({
+                    id: spellItem.id || '',
+                    name: spellItem.name || '',
+                    level:
+                      parseInt(levelKey.replace('spell', '')) || spellSystem?.level?.value || 0,
+                    prepared: spellRef.prepared ?? true,
+                    expended: spellRef.expended ?? false,
+                    traits: spellSystem?.traits?.value || [],
+                    actionCost: this.formatPF2eActionCost(spellSystem?.time?.value),
+                    range: targeting.range,
+                    target: targeting.target,
+                    area: targeting.area,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        entries.push({
+          id: entry.id || '',
+          name: entry.name || 'Spellcasting',
+          tradition: entryData?.tradition?.value || entryData?.tradition || undefined,
+          type: entryData?.prepared?.value || entryData?.prepared || 'prepared',
+          ability: entryData?.ability?.value || entryData?.ability || undefined,
+          dc: entryData?.spelldc?.dc || entryData?.dc?.value || undefined,
+          attack: entryData?.spelldc?.value || entryData?.attack?.value || undefined,
+          slots: this.extractPF2eSpellSlots(entryData),
+          spells: entrySpells.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+        });
+      }
+
+      // Also capture focus spells and innate spells that might not be in entries
+      const focusSpells = spellItems.filter((spell: any) => {
+        const spellSystem = spell.system;
+        return (
+          spellSystem?.traits?.value?.includes('focus') || spellSystem?.category?.value === 'focus'
+        );
+      });
+
+      if (focusSpells.length > 0 && !entries.some(e => e.type === 'focus')) {
+        entries.push({
+          id: 'focus-spells',
+          name: 'Focus Spells',
+          type: 'focus',
+          spells: focusSpells.map((spell: any) => {
+            const spellSystem = spell.system;
+            const targeting = this.extractPF2eSpellTargeting(spellSystem);
+            return {
+              id: spell.id || '',
+              name: spell.name || '',
+              level: spellSystem?.level?.value || 0,
+              traits: spellSystem?.traits?.value || [],
+              actionCost: this.formatPF2eActionCost(spellSystem?.time?.value),
+              range: targeting.range,
+              target: targeting.target,
+              area: targeting.area,
+            };
+          }),
+        });
+      }
+    } else if (systemId === 'dnd5e') {
+      // D&D 5e: Extract from classes with spellcasting
+      const classes = actor.items.filter(item => item.type === 'class');
+      const spellSlots = actorAny.system?.spells || {};
+
+      // Group spells by their source class or create a general entry
+      const spellsByClass: Record<string, SpellInfo[]> = {};
+
+      for (const spell of spellItems) {
+        const spellSystem = spell.system as any;
+        const spellRaw = (spell as any)._source?.system || spellSystem;
+        const sourceItem = spellSystem?.sourceItem;
+        const sourceClass =
+          (sourceItem
+            ? typeof sourceItem === 'string'
+              ? sourceItem
+              : sourceItem.identifier || sourceItem.id
+            : spellRaw?.sourceClass) || 'general';
+
+        if (!spellsByClass[sourceClass]) {
+          spellsByClass[sourceClass] = [];
+        }
+
+        const targeting = this.extractDnD5eSpellTargeting(spellSystem);
+        spellsByClass[sourceClass].push({
+          id: spell.id || '',
+          name: spell.name || '',
+          level: spellSystem?.level || 0,
+          prepared: spellSystem?.prepared ?? spellRaw?.preparation?.prepared ?? true,
+          traits: [], // D&D 5e doesn't use traits the same way
+          actionCost: spellSystem?.activation?.type || undefined,
+          range: targeting.range,
+          target: targeting.target,
+          area: targeting.area,
+        });
+      }
+
+      // Create entries for each spellcasting class
+      for (const classItem of classes) {
+        const classSystem = classItem.system as any;
+        if (
+          classSystem?.spellcasting?.progression &&
+          classSystem.spellcasting.progression !== 'none'
+        ) {
+          const className = classItem.name || 'Unknown';
+          const classSpells =
+            spellsByClass[classItem.id || ''] || spellsByClass[className.toLowerCase()] || [];
+
+          entries.push({
+            id: classItem.id || '',
+            name: `${className} Spellcasting`,
+            type: classSystem?.spellcasting?.type || 'prepared',
+            ability: classSystem?.spellcasting?.ability || undefined,
+            slots: this.extractDnD5eSpellSlots(spellSlots),
+            spells: classSpells.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+          });
+        }
+      }
+
+      // If no class-based entries found but we have spells, create a general entry
+      if (entries.length === 0 && spellItems.length > 0) {
+        const allSpells: SpellInfo[] = [];
+        for (const spell of spellItems) {
+          const spellSystem = spell.system as any;
+          const targeting = this.extractDnD5eSpellTargeting(spellSystem);
+          allSpells.push({
+            id: spell.id || '',
+            name: spell.name || '',
+            level: spellSystem?.level || 0,
+            prepared: spellSystem?.preparation?.prepared ?? true,
+            actionCost: spellSystem?.activation?.type || undefined,
+            range: targeting.range,
+            target: targeting.target,
+            area: targeting.area,
+          });
+        }
+
+        entries.push({
+          id: 'spellcasting',
+          name: 'Spellcasting',
+          type: 'prepared',
+          slots: this.extractDnD5eSpellSlots(spellSlots),
+          spells: allSpells.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+        });
+      }
+    } else if (systemId === 'dsa5') {
+      // DSA5: Extract Zauber (spells), Liturgien (liturgies), Zeremonien (ceremonies), Rituale (rituals)
+      const astralSpells = actor.items.filter(item => item.type === 'spell');
+      const karmaSpells = actor.items.filter(item => ['liturgy', 'ceremony'].includes(item.type));
+      const rituals = actor.items.filter(item => item.type === 'ritual');
+
+      // Get AsP and KaP from actor
+      const asp = actorAny.system?.status?.astralenergy || actorAny.system?.astralenergy;
+      const kap = actorAny.system?.status?.karmaenergy || actorAny.system?.karmaenergy;
+
+      // Zauber (Arcane spells using AsP)
+      if (astralSpells.length > 0) {
+        entries.push({
+          id: 'zauber',
+          name: 'Zauber (Spells)',
+          type: 'arcane',
+          slots: asp
+            ? {
+                asp: { value: asp.value ?? 0, max: asp.max ?? 0 },
+              }
+            : undefined,
+          spells: astralSpells
+            .map((spell: any) => {
+              const spellSystem = spell.system;
+              const targeting = this.extractDSA5SpellTargeting(spellSystem);
+              return {
+                id: spell.id || '',
+                name: spell.name || '',
+                level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
+                traits: spellSystem?.effect?.attributes || [],
+                actionCost: spellSystem?.castingTime?.value || undefined,
+                range: targeting.range,
+                target: targeting.target,
+                area: targeting.area,
+              };
+            })
+            .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+        });
+      }
+
+      // Liturgien & Zeremonien (Divine spells using KaP)
+      if (karmaSpells.length > 0) {
+        entries.push({
+          id: 'liturgien',
+          name: 'Liturgien & Zeremonien (Liturgies)',
+          type: 'divine',
+          slots: kap
+            ? {
+                kap: { value: kap.value ?? 0, max: kap.max ?? 0 },
+              }
+            : undefined,
+          spells: karmaSpells
+            .map((spell: any) => {
+              const spellSystem = spell.system;
+              const targeting = this.extractDSA5SpellTargeting(spellSystem);
+              return {
+                id: spell.id || '',
+                name: spell.name || '',
+                level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
+                traits: spellSystem?.effect?.attributes || [],
+                actionCost: spellSystem?.castingTime?.value || undefined,
+                range: targeting.range,
+                target: targeting.target,
+                area: targeting.area,
+              };
+            })
+            .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+        });
+      }
+
+      // Rituale (Rituals - can use either AsP or KaP depending on tradition)
+      if (rituals.length > 0) {
+        entries.push({
+          id: 'rituale',
+          name: 'Rituale (Rituals)',
+          type: 'ritual',
+          spells: rituals
+            .map((spell: any) => {
+              const spellSystem = spell.system;
+              const targeting = this.extractDSA5SpellTargeting(spellSystem);
+              return {
+                id: spell.id || '',
+                name: spell.name || '',
+                level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
+                traits: spellSystem?.effect?.attributes || [],
+                actionCost: spellSystem?.castingTime?.value || undefined,
+                range: targeting.range,
+                target: targeting.target,
+                area: targeting.area,
+              };
+            })
+            .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+        });
+      }
+    } else if (systemId === 'wfrp4e') {
+      // WFRP4e: arcane spells grouped by Lore, divine prayers grouped by God.
+      // WFRP4e has no spell levels or slots; spells use a Casting Number (CN).
+      const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+      // Arcane spells, grouped by lore
+      const spellsByLore = new Map<string, SpellInfo[]>();
+      for (const spell of actor.items.filter(item => item.type === 'spell')) {
+        const spellSystem = spell.system as any;
+        const loreRaw = spellSystem?.lore?.value;
+        const lore = String((Array.isArray(loreRaw) ? loreRaw[0] : loreRaw) || 'arcane');
+        const cn = spellSystem?.cn?.value;
+        const info: SpellInfo = {
+          id: spell.id || '',
+          name: spell.name || '',
+          level: 0,
+          actionCost: cn !== undefined && cn !== null ? `CN ${cn}` : undefined,
+          range: spellSystem?.range?.value || undefined,
+          target: spellSystem?.target?.value || undefined,
+        };
+        if (!spellsByLore.has(lore)) spellsByLore.set(lore, []);
+        spellsByLore.get(lore)!.push(info);
+      }
+      for (const [lore, loreSpells] of spellsByLore) {
+        entries.push({
+          id: `lore-${lore}`,
+          name: `Lore of ${cap(lore)}`,
+          type: 'arcane',
+          tradition: 'arcane',
+          spells: loreSpells.sort((a, b) => a.name.localeCompare(b.name)),
+        });
+      }
+
+      // Divine prayers, grouped by god
+      const prayersByGod = new Map<string, SpellInfo[]>();
+      for (const prayer of actor.items.filter(item => item.type === 'prayer')) {
+        const praySystem = prayer.system as any;
+        const god = String(praySystem?.god?.value || 'divine');
+        const info: SpellInfo = {
+          id: prayer.id || '',
+          name: prayer.name || '',
+          level: 0,
+          range: praySystem?.range?.value || undefined,
+          target: praySystem?.target?.value || undefined,
+        };
+        if (!prayersByGod.has(god)) prayersByGod.set(god, []);
+        prayersByGod.get(god)!.push(info);
+      }
+      for (const [god, godPrayers] of prayersByGod) {
+        entries.push({
+          id: `prayers-${god}`,
+          name: god === 'divine' ? 'Prayers' : `Prayers (${cap(god)})`,
+          type: 'divine',
+          tradition: 'divine',
+          spells: godPrayers.sort((a, b) => a.name.localeCompare(b.name)),
+        });
+      }
+    }
+
+    return entries;
+  }
+
+  /**
+   * Format PF2e action cost to human-readable string
+   */
+  formatPF2eActionCost(actionValue: any): string | undefined {
+    if (!actionValue) return undefined;
+    if (typeof actionValue === 'number') {
+      return actionValue === 1 ? '1 action' : `${actionValue} actions`;
+    }
+    if (actionValue === 'reaction') return 'reaction';
+    if (actionValue === 'free') return 'free action';
+    return String(actionValue);
+  }
+
+  /**
+   * Extract PF2e spell slots from spellcasting entry data
+   */
+  private extractPF2eSpellSlots(
+    entryData: any
+  ): Record<string, { value: number; max: number }> | undefined {
+    const slots: Record<string, { value: number; max: number }> = {};
+
+    // PF2e stores slots per rank
+    for (let rank = 1; rank <= 10; rank++) {
+      const slotKey = `slot${rank}`;
+      const slotData = entryData?.slots?.[slotKey] || entryData?.[slotKey];
+      if (slotData && (slotData.max > 0 || slotData.value > 0)) {
+        slots[`rank${rank}`] = {
+          value: slotData.value ?? 0,
+          max: slotData.max ?? 0,
+        };
+      }
+    }
+
+    return Object.keys(slots).length > 0 ? slots : undefined;
+  }
+
+  /**
+   * Extract D&D 5e spell slots from actor system data
+   */
+  private extractDnD5eSpellSlots(
+    spellsData: any
+  ): Record<string, { value: number; max: number }> | undefined {
+    const slots: Record<string, { value: number; max: number }> = {};
+
+    // D&D 5e stores slots as spell1, spell2, etc.
+    for (let level = 1; level <= 9; level++) {
+      const slotKey = `spell${level}`;
+      const slotData = spellsData?.[slotKey];
+      if (slotData && (slotData.max > 0 || slotData.value > 0)) {
+        slots[`level${level}`] = {
+          value: slotData.value ?? 0,
+          max: slotData.max ?? 0,
+        };
+      }
+    }
+
+    // Also check for pact slots (warlock)
+    const pactSlot = spellsData?.pact;
+    if (pactSlot && (pactSlot.max > 0 || pactSlot.value > 0)) {
+      slots['pact'] = {
+        value: pactSlot.value ?? 0,
+        max: pactSlot.max ?? 0,
+      };
+    }
+
+    return Object.keys(slots).length > 0 ? slots : undefined;
+  }
+
+  /**
+   * Extract spell targeting info for D&D 5e
+   * D&D 5e spells have: target.type ("self", "creature", "point", etc.), range.value, range.units
+   */
+  extractDnD5eSpellTargeting(spellSystem: any): {
+    range?: string;
+    target?: string;
+    area?: string;
+  } {
+    const result: { range?: string; target?: string; area?: string } = {};
+
+    // Range (e.g., "60 feet", "Self", "Touch")
+    const rangeValue = spellSystem?.range?.value;
+    const rangeUnits = spellSystem?.range?.units;
+    if (rangeUnits === 'self') {
+      result.range = 'Self';
+    } else if (rangeUnits === 'touch') {
+      result.range = 'Touch';
+    } else if (rangeUnits === 'spec') {
+      result.range = spellSystem?.range?.special || 'Special';
+    } else if (rangeValue && rangeUnits) {
+      result.range = `${rangeValue} ${rangeUnits}`;
+    }
+
+    // Target type (e.g., "1 creature", "self", "area")
+    const targetType = spellSystem?.target?.type;
+    const targetValue = spellSystem?.target?.value;
+    if (targetType === 'self') {
+      result.target = 'self';
+    } else if (targetType === 'creature' || targetType === 'ally' || targetType === 'enemy') {
+      result.target = targetValue
+        ? `${targetValue} ${targetType}${targetValue > 1 ? 's' : ''}`
+        : targetType;
+    } else if (targetType === 'object') {
+      result.target = targetValue ? `${targetValue} object${targetValue > 1 ? 's' : ''}` : 'object';
+    } else if (targetType === 'space' || targetType === 'point') {
+      result.target = 'point';
+    } else if (targetType) {
+      result.target = targetType;
+    }
+
+    // Area (for AoE spells - e.g., "20-foot radius", "30-foot cone")
+    const areaType = spellSystem?.target?.template?.type;
+    const areaSize = spellSystem?.target?.template?.size;
+    const areaUnits = spellSystem?.target?.template?.units || 'ft';
+    if (areaType && areaSize) {
+      result.area = `${areaSize}-${areaUnits} ${areaType}`;
+      // If spell has area, target is usually "area"
+      if (!result.target || result.target === 'point') {
+        result.target = 'area';
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Extract spell targeting info for PF2e
+   * PF2e spells have: target (string), range.value, area.type, area.value
+   */
+  extractPF2eSpellTargeting(spellSystem: any): {
+    range?: string;
+    target?: string;
+    area?: string;
+  } {
+    const result: { range?: string; target?: string; area?: string } = {};
+
+    // Range (e.g., "30 feet", "touch")
+    const rangeValue = spellSystem?.range?.value;
+    if (rangeValue) {
+      result.range = String(rangeValue);
+    }
+
+    // Target (PF2e has a descriptive target string)
+    const targetValue = spellSystem?.target?.value;
+    if (targetValue) {
+      result.target = String(targetValue);
+    }
+
+    // Area (e.g., "15-foot emanation", "30-foot cone")
+    const areaType = spellSystem?.area?.type;
+    const areaValue = spellSystem?.area?.value;
+    if (areaType) {
+      if (areaValue) {
+        result.area = `${areaValue}-foot ${areaType}`;
+      } else {
+        result.area = areaType;
+      }
+      // If has area but no explicit target, it's an area spell
+      if (!result.target) {
+        result.target = 'area';
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Extract spell targeting info for DSA5
+   * DSA5 spells have: targetCategory, range, etc.
+   */
+  extractDSA5SpellTargeting(spellSystem: any): {
+    range?: string;
+    target?: string;
+    area?: string;
+  } {
+    const result: { range?: string; target?: string; area?: string } = {};
+
+    // Range
+    const rangeValue = spellSystem?.range?.value || spellSystem?.Reichweite;
+    if (rangeValue) {
+      result.range = String(rangeValue);
+    }
+
+    // Target category
+    const targetCategory = spellSystem?.targetCategory?.value || spellSystem?.Zielkategorie;
+    if (targetCategory) {
+      result.target = String(targetCategory);
+    }
+
+    // Area (Wirkungsbereich)
+    const areaValue = spellSystem?.effectRadius?.value || spellSystem?.Wirkungsbereich;
+    if (areaValue) {
+      result.area = String(areaValue);
+    }
+
+    return result;
+  }
+}
