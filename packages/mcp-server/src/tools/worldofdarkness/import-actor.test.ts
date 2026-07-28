@@ -664,6 +664,39 @@ describe('Requirement: a document supplied by reference is confined to an allow-
     expect(calls).toHaveLength(0);
   });
 
+  // The refusal shape, named rather than `any`, so the assertions below are
+  // type-checked and add no `no-unsafe-member-access` noise.
+  type Rejection = { success: boolean; error?: string };
+
+  // The bare reason is true but sends the reader to a config file that is
+  // usually already correct. The real cause is almost always that THIS backend
+  // process did not inherit the configured environment, so the refusal has to
+  // name that. See the singleton note in index.ts / docs/foundry-import.md.
+  it('names the likely cause — a backend that did not inherit the config — when importDir is unset', async () => {
+    const { tools } = makeTools(createAll, { importDir: undefined });
+    const res = (await tools.handleImportActor({ actorPath: 'staged.json' })) as Rejection;
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/WOD_IMPORT_DIR/);
+    expect(res.error).toMatch(/singleton/);
+    expect(res.error).toMatch(/31414/);
+    // Explicitly contradicts the wrong first instinct.
+    expect(res.error).toMatch(/restarting the MCP client will not fix it/);
+  });
+
+  // The hint must be a FIXED string. A rejection that escaped a *configured*
+  // root must not gain any extra detail — that is the error-hygiene rule in
+  // import-path.ts, and the resolved root must never be echoed.
+  it('does not attach the configuration hint to a path that escaped a configured root', async () => {
+    const { tools } = makeTools(createAll, { importDir: dir });
+    const res = (await tools.handleImportActor({
+      actorPath: '../../etc/passwd.json',
+    })) as Rejection;
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/outside importDir/);
+    expect(res.error).not.toMatch(/WOD_IMPORT_DIR/);
+    expect(res.error).not.toContain(dir);
+  });
+
   it('validates a staged doc through the SAME schema as an inline one', async () => {
     const { tools, calls } = makeTools(createAll, { importDir: dir });
     const res: any = await tools.handleImportActor({ actorPath: 'bad-schema.json' });

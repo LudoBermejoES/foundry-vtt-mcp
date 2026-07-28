@@ -1161,12 +1161,29 @@ async function startBackend(): Promise<void> {
     filePath: path.join(os.tmpdir(), 'foundry-mcp-server', 'mcp-server.log'),
   });
 
+  // The resolved config is logged at startup ON PURPOSE. The backend is a
+  // singleton (see the lock below): whichever process wins port 31414 serves
+  // EVERY client session with the environment IT was started with, and a
+  // hand-started backend inherits a shell's environment rather than the MCP
+  // client's configured `env`. A wrong-config process is otherwise invisible
+  // until some later call fails for a reason that does not name the cause.
+  // `wodImportDir` is operator-supplied configuration, not a caller-supplied
+  // path, and this is the local operator log — the error-hygiene rule in
+  // import-path.ts governs what goes back to a *caller*, and is unaffected.
   logger.info('Starting Foundry MCP Backend', {
     version: config.server.version,
 
     foundryHost: config.foundry.host,
 
     foundryPort: config.foundry.port,
+
+    pid: process.pid,
+
+    // Distinguish "not configured" from "configured", explicitly: an absent
+    // key in the log line reads as neither.
+    wodImportDir: config.wod.importDir ?? '(unset — staged path intake disabled)',
+
+    wodImportMaxBytes: config.wod.importMaxBytes,
   });
 
   // Initialize Foundry client and tools

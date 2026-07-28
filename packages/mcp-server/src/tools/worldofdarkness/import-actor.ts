@@ -391,6 +391,34 @@ export class WoDImportActorTools {
               : error instanceof Error
                 ? error.message
                 : 'unreadable';
+          // "Not configured" is the one rejection whose true cause is usually
+          // NOT the path — it is that THIS backend process did not inherit the
+          // configured environment. Say so, because the bare reason sends the
+          // reader off to check a config file that is very often already right.
+          // The hint is a fixed string: it names an env var and an operational
+          // rule, never a resolved path and never anything read from disk, so
+          // import-path.ts's error hygiene is preserved.
+          if (error instanceof ImportPathError && error.reason.startsWith('path intake disabled')) {
+            this.logger.error(
+              'Staged path intake is unavailable: wod.importDir is unset in THIS backend process. ' +
+                'The backend is a singleton on port 31414 and serves every session with the ' +
+                'environment it was started with, so a hand-started backend ' +
+                '(e.g. `nohup node backend.bundle.cjs`) has none of the MCP client config. ' +
+                'Check the "Starting Foundry MCP Backend" line in this log for the value it did resolve.',
+              { requestedCount: paths.length }
+            );
+            return {
+              success: false,
+              error:
+                `Rejected actor path — ${msg}. ` +
+                'This is a server-configuration fault, not a bad path: WOD_IMPORT_DIR is unset ' +
+                'in the running backend process. Note the backend is a singleton on port 31414 ' +
+                'and is NOT replaced when one is already listening — if it was hand-started it ' +
+                'inherited a shell environment instead of the MCP client config, and restarting ' +
+                'the MCP client will not fix it. See docs/foundry-import.md ' +
+                '("Staged path intake needs a backend that inherited the config").',
+            };
+          }
           return { success: false, error: `Rejected actor path — ${msg}` };
         }
         // Staged documents go through the SAME schema as inline ones: exactly
