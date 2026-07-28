@@ -82,6 +82,54 @@ const ConfigSchema = z.object({
   }),
 });
 
+/**
+ * Bounds on expanding a staged ARCHIVE (tools/worldofdarkness/import-archive.ts).
+ *
+ * Declared here, next to `wod.importMaxBytes`, because the fourth bound IS
+ * `importMaxBytes` and the four only make sense read together. Each has a
+ * DIFFERENT reason, which is why there are four numbers and not one:
+ *
+ *   - MAX_RAW_ENTRIES — a PARSE bound, against an entry-count bomb: a central
+ *     directory naming a million entries costs memory in the inventory before a
+ *     single byte is inflated. Set well above what real producers emit: macOS
+ *     "Compress" (`ditto -c -k --sequesterRsrc --keepParent`) yields 27 entries
+ *     for 12 documents — a 2.25x multiplication — so at the document cap the worst
+ *     real archive is ~113 entries. 512 is ~4.5x above that and therefore never
+ *     binds before MAX_DOCUMENTS does, which matters: a single entry cap would let
+ *     a Finder archive carry ~22 actors while a `zip -r` one carried 50, i.e. the
+ *     same request accepted or refused depending on which button the operator
+ *     pressed.
+ *   - MAX_DOCUMENTS — a REQUEST bound, not a safety bound, and the SAME number for
+ *     the SAME reason as `actorPaths` (which is why it is declared once, here, and
+ *     read by both). The reason is aggregate wall clock, not size: at the 51,200-byte
+ *     per-query work budget a 50-document archive is ~50 sequential bridge queries
+ *     whose deadlines sum to ~580 s inside ONE tool call, and `chunkTimeoutMs` caps
+ *     each query, never the sum. Making 50 documents easy to ask for is a reason to
+ *     KEEP this cap, not to raise it.
+ *   - MAX_TOTAL_UNCOMPRESSED_BYTES — its own bound because nothing else constrains
+ *     it. The staged-file gate is a gate on the FILE, and an archive's whole point
+ *     is that the file is small: a measured 50-document archive is 288 KB as a file
+ *     — comfortably inside the 2 MiB default, with 7x headroom — and carries
+ *     3,529,028 bytes of documents. 8 MiB is 2.3x that worst measured case, and is
+ *     deliberately the same number as `WEBRTC_CONSTANTS.MAX_DECOMPRESSED_BYTES`
+ *     below: both answer "the most this server will expand from one compressed
+ *     input", and one answer is easier to keep true than two.
+ *   - the per-entry uncompressed bound is `wod.importMaxBytes` itself, passed in by
+ *     the tool rather than duplicated here, so that an archive entry can never
+ *     carry more than a staged file could.
+ *
+ * All of them are DECLARED CONSTANTS, not artefacts of available memory, and the
+ * last two are enforced against MEASURED output while it is produced — the same
+ * discipline `MAX_DECOMPRESSED_BYTES` states for the wire decompressor, because it
+ * is the same class of hazard. A ZIP central directory is attacker-controlled data,
+ * so the sizes it declares are a cheap pre-filter and never the authority.
+ */
+export const WOD_ARCHIVE_LIMITS = {
+  MAX_RAW_ENTRIES: 512,
+  MAX_DOCUMENTS: 50,
+  MAX_TOTAL_UNCOMPRESSED_BYTES: 8 * 1024 * 1024, // 8 MiB
+} as const;
+
 export type Config = z.infer<typeof ConfigSchema>;
 
 const rawConfig = {

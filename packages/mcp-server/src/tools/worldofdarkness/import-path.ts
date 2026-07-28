@@ -23,8 +23,12 @@
  *     filesystem access), then `fs.realpath` (which resolves symlinks but does not
  *     read contents) re-checks containment, then the size cap is checked via
  *     `stat`. Only after all of that is the file read.
- *   - `.json` only, one named file per entry: no globs, no recursion, no
- *     directory listing.
+ *   - One named file per entry, with the permitted extension PARAMETERISED (see
+ *     `ImportPathOptions.extension`): `.json` for a document, `.zip` for the
+ *     archive intake (import-archive.ts). No globs, no recursion, no directory
+ *     listing. The containment logic below is the ONLY copy — two copies of a
+ *     containment check is the failure this whole model exists to avoid, so a new
+ *     intake parameterises this resolver rather than growing its own.
  *   - Error hygiene. Failures report the caller's own relative path plus one of a
  *     fixed set of reasons. Never a resolved absolute path, never file contents,
  *     and the reason for anything escaping the root is always `outside importDir`
@@ -34,33 +38,71 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
+/**
+ * The fixed set of rejection reasons. Archive reasons live here rather than in
+ * import-archive.ts so the set stays enumerable in one place — the discipline is
+ * "a caller can only ever be told one of these", and that is only checkable if
+ * they are all visible together.
+ */
 export type ImportPathRejection =
+  // ── shared with every intake ───────────────────────────────────────────────
   | 'path intake disabled (wod.importDir is not configured)'
   | 'outside importDir'
-  | 'must be a .json file'
   | 'not found'
   | 'not a regular file'
   | 'too large'
-  | 'invalid JSON';
+  // ── document intake ───────────────────────────────────────────────────────
+  | 'must be a .json file'
+  | 'invalid JSON'
+  // ── archive intake (import-archive.ts) ────────────────────────────────────
+  | 'must be a .zip file'
+  | 'not a readable archive'
+  | 'ZIP64 is not supported'
+  | 'too many entries'
+  | 'unsafe entry name'
+  | 'encrypted entry'
+  | 'unsupported compression method'
+  | 'entry expands beyond the per-entry bound'
+  | 'archive expands beyond the total bound'
+  | 'invalid JSON in entry'
+  | 'no actor documents found';
 
 export class ImportPathError extends Error {
   readonly relativePath: string;
   readonly reason: ImportPathRejection;
 
-  constructor(relativePath: string, reason: ImportPathRejection) {
-    // The message deliberately contains only what the caller already supplied.
-    super(`${relativePath}: ${reason}`);
+  /**
+   * `context` carries OUR OWN numbers — a bound that was exceeded, a compression
+   * method number, a sanitised entry name — never anything read out of a file.
+   * The one deliberate narrowing is the entry name, which import-archive.ts
+   * sanitises before passing it; see that file's header for why identifying the
+   * failing entry is worth it and where the line is drawn.
+   */
+  constructor(relativePath: string, reason: ImportPathRejection, context?: string) {
+    // The message deliberately contains only what the caller already supplied
+    // plus, optionally, our own numbers.
+    super(`${relativePath}: ${reason}${context !== undefined ? ` (${context})` : ''}`);
     this.name = 'ImportPathError';
     this.relativePath = relativePath;
     this.reason = reason;
   }
 }
 
+/** Extensions any intake may permit, and the rejection each one produces. */
+const EXTENSION_REJECTION = {
+  '.json': 'must be a .json file',
+  '.zip': 'must be a .zip file',
+} as const satisfies Record<string, ImportPathRejection>;
+
+export type PermittedExtension = keyof typeof EXTENSION_REJECTION;
+
 export interface ImportPathOptions {
   /** `config.wod.importDir`. Undefined/empty ⇒ path intake is disabled. */
   importDir?: string | undefined;
   /** `config.wod.importMaxBytes`. */
   maxBytes: number;
+  /** The one permitted extension. Defaults to `.json`. */
+  extension?: PermittedExtension;
 }
 
 /** True iff `candidate` is the root itself or lies beneath it. */
@@ -94,8 +136,9 @@ export async function resolveImportPath(
     throw new ImportPathError(shown, 'outside importDir');
   }
 
-  if (path.extname(requested).toLowerCase() !== '.json') {
-    throw new ImportPathError(shown, 'must be a .json file');
+  const extension: PermittedExtension = options.extension ?? '.json';
+  if (path.extname(requested).toLowerCase() !== extension) {
+    throw new ImportPathError(shown, EXTENSION_REJECTION[extension]);
   }
 
   // The root must itself exist and be a directory, and we compare against its
@@ -140,16 +183,17 @@ export async function resolveImportPath(
 }
 
 /**
- * Resolve, size-check and parse one staged actor document.
+ * Resolve, size-check and read one staged file as bytes.
  *
- * Returns the parsed JSON only; the caller feeds it through the SAME
- * `actorDocSchema` an inline document goes through, so there is exactly one
- * validation path.
+ * The shared half of every staged intake: resolve (§ above), `stat` for the size
+ * gate BEFORE opening, then read. Both the document intake and the archive intake
+ * go through this, so the ordering — and the fact that the size cap is checked
+ * against `stat` rather than after reading — exists in exactly one place.
  */
-export async function readActorDocFromPath(
+export async function readStagedFile(
   requested: string,
   options: ImportPathOptions
-): Promise<unknown> {
+): Promise<Buffer> {
   const shown = requested.length > 200 ? `${requested.slice(0, 200)}…` : requested;
   const resolved = await resolveImportPath(requested, options);
 
@@ -163,12 +207,27 @@ export async function readActorDocFromPath(
     throw new ImportPathError(shown, 'too large');
   }
 
-  const text = await fs.readFile(resolved, 'utf8').catch(() => {
+  return await fs.readFile(resolved).catch(() => {
     throw new ImportPathError(shown, 'not found');
   });
+}
+
+/**
+ * Resolve, size-check and parse one staged actor document.
+ *
+ * Returns the parsed JSON only; the caller feeds it through the SAME
+ * `actorDocSchema` an inline document goes through, so there is exactly one
+ * validation path.
+ */
+export async function readActorDocFromPath(
+  requested: string,
+  options: ImportPathOptions
+): Promise<unknown> {
+  const shown = requested.length > 200 ? `${requested.slice(0, 200)}…` : requested;
+  const bytes = await readStagedFile(requested, options);
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(bytes.toString('utf8'));
   } catch {
     // Deliberately does not include the parser's message: it quotes the offending
     // source text, which would leak file contents.

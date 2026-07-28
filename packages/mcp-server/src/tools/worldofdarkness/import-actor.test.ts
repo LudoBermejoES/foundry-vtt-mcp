@@ -20,6 +20,8 @@ import * as path from 'path';
 import { WoDImportActorTools } from './import-actor.js';
 import { payloadBytes, TRANSPORT_MAX_MESSAGE_BYTES } from './import-chunking.js';
 import { COMPRESSION_CAPABILITY, wireBytesOf } from '../../wire-format.js';
+import { WOD_ARCHIVE_LIMITS } from '../../config.js';
+import { buildZip, appleDoubleSidecar, type ZipMemberSpec } from './__fixtures__/zip-writer.js';
 
 const CAPABLE_PONG = {
   status: 'ok',
@@ -764,5 +766,475 @@ describe('backward compatibility', () => {
     for (const key of ['actor', 'actors', 'folder', 'overwrite']) {
       expect(defs[0].inputSchema.properties).toHaveProperty(key);
     }
+  });
+});
+
+// ── the staged-archive intake ──────────────────────────────────────────────────
+
+describe('Requirement: a batch of actor documents is importable from one staged archive', () => {
+  let dir: string;
+
+  /** Stage `name.zip` containing `members` and return the relative path. */
+  async function stage(name: string, members: ZipMemberSpec[]): Promise<string> {
+    await fs.writeFile(path.join(dir, name), buildZip(members));
+    return name;
+  }
+
+  /** A document as it lands in an archive entry: JSON text, one actor. */
+  const entryDoc = (name: string, sourceId?: string, kb = 3) =>
+    JSON.stringify(
+      sourceId === undefined ? withoutProvenance(name, kb) : actorDoc(name, kb, sourceId)
+    );
+
+  /** `actorDoc` minus its provenance — what a raw `wod character export` emits. */
+  function withoutProvenance(name: string, kb = 3): Record<string, any> {
+    const doc = actorDoc(name, kb);
+    delete doc.flags;
+    doc.img = 'icons/svg/mystery-man.svg';
+    doc.prototypeToken = { texture: { src: 'icons/svg/mystery-man.svg' } };
+    return doc;
+  }
+
+  beforeAll(async () => {
+    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'wod-import-arc-')));
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('imports every document an archive yields, as if they had been supplied individually', async () => {
+    const p = await stage('cast.zip', [
+      { name: 'actors/', data: '' },
+      { name: 'actors/ana.json', data: entryDoc('Ana', 'src-ana') },
+      { name: 'actors/beto.json', data: entryDoc('Beto', 'src-beto') },
+      { name: '__MACOSX/actors/._ana.json', data: appleDoubleSidecar() },
+    ]);
+    const { tools, importCalls } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p, folder: 'Berlin' });
+
+    expect(res.success).toBe(true);
+    expect(res.counts.created).toBe(2);
+    // The archive never becomes a bridge payload: every query carries only actors.
+    for (const call of importCalls()) {
+      expect(Object.keys(call.data)).toEqual(expect.arrayContaining(['actors']));
+      expect(JSON.stringify(call.data)).not.toContain('cast.zip');
+      expect(JSON.stringify(call.data)).not.toContain('__MACOSX');
+    }
+  });
+
+  it('is mutually exclusive with the inline and per-path intakes', async () => {
+    const p = await stage('excl.zip', [{ name: 'a.json', data: entryDoc('Ana', 'src-a') }]);
+    const { tools, calls } = makeTools(createAll, { importDir: dir });
+
+    for (const other of [
+      { actor: actorDoc('Inline', 3) },
+      { actors: [actorDoc('Inline', 3)] },
+      { actorPath: 'a.json' },
+      { actorPaths: ['a.json'] },
+    ]) {
+      const res: any = await tools.handleImportActor({ actorArchive: p, ...other });
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/Do not mix intakes/);
+    }
+    expect(calls).toHaveLength(0); // refused before anything is read or written
+  });
+
+  it('refuses an archive when no importDir is configured, without reading the file', async () => {
+    const { tools, calls } = makeTools(createAll, { importDir: undefined });
+    const res: any = await tools.handleImportActor({ actorArchive: 'cast.zip' });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/path intake disabled/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses an archive path that escapes importDir, with the same reason a document path gets', async () => {
+    const { tools, calls } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: '../../etc/passwd.zip' });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/outside importDir/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('validates archive documents with the SAME schema, and refuses the whole call on one bad doc', async () => {
+    const p = await stage('bad.zip', [
+      { name: 'ok.json', data: entryDoc('Ana', 'src-a') },
+      { name: 'bad.json', data: JSON.stringify({ name: 'No type or system' }) },
+    ]);
+    const { tools, calls } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/bad\.json: schema/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses an archive over the documents-per-call cap, naming the cap and the count', async () => {
+    const members = Array.from({ length: WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS + 1 }, (_, i) => ({
+      name: `a${i}.json`,
+      data: entryDoc(`Actor${i}`, `src-${i}`, 1),
+    }));
+    const p = await stage('too-many.zip', members);
+    const { tools, calls } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain(String(WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS + 1));
+    expect(res.error).toContain(String(WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS));
+    expect(res.error).toMatch(/WALL CLOCK/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('accounts for every entry in the response, with counts that sum', async () => {
+    const p = await stage('mixed.zip', [
+      { name: 'actors/', data: '' },
+      { name: 'actors/ana.json', data: entryDoc('Ana', 'src-ana') },
+      { name: 'actors/notes.txt', data: 'hello' },
+      { name: '__MACOSX/actors/._ana.json', data: appleDoubleSidecar() },
+    ]);
+    const { tools } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p });
+
+    expect(res.archive.path).toBe(p);
+    expect(res.archive.counts).toEqual({ entries: 4, documents: 1, ignored: 3, refused: 0 });
+    expect(
+      res.archive.counts.documents + res.archive.counts.ignored + res.archive.counts.refused
+    ).toBe(res.archive.counts.entries);
+    for (const entry of res.archive.entries) {
+      if (entry.classification !== 'document') expect(entry.reason).toBeTruthy();
+    }
+  });
+
+  it('names the originating entry on every per-actor outcome, including the ones the server adds', async () => {
+    const p = await stage('attribution.zip', [
+      { name: 'ana.json', data: entryDoc('Ana', 'src-ana', 40) },
+      { name: 'beto.json', data: entryDoc('Beto', 'src-beto', 40) },
+    ]);
+    // One query per document, and the second one fails: `ana` gets a real outcome
+    // from the module, `beto` gets the server's `unknown`. Both must name an entry.
+    let seen = 0;
+    const failSecond: QueryImpl = async (method, data, timeoutMs) => {
+      if (method === 'foundry-mcp-bridge.ping') return CAPABLE_PONG;
+      if (++seen === 2) throw new Error('Query timeout: importActors');
+      return createAll(method, data, timeoutMs);
+    };
+    const { tools } = makeTools(failSecond, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p, batchSize: 1 });
+
+    expect(res.results).toHaveLength(2);
+    expect(res.results.map((r: any) => r.entry)).toEqual(['ana.json', 'beto.json']);
+    expect(res.results[0].status).toBe('created');
+    expect(res.results[1].status).toBe('unknown');
+  });
+
+  it('issues archive documents sequentially, never in parallel', async () => {
+    const p = await stage('seq.zip', [
+      { name: 'a.json', data: entryDoc('A', 'src-a', 40) },
+      { name: 'b.json', data: entryDoc('B', 'src-b', 40) },
+      { name: 'c.json', data: entryDoc('C', 'src-c', 40) },
+    ]);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const watched: QueryImpl = async (method, data, timeoutMs) => {
+      if (method === 'foundry-mcp-bridge.ping') return CAPABLE_PONG;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      inFlight--;
+      return createAll(method, data, timeoutMs);
+    };
+    const { tools, importCalls } = makeTools(watched, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p });
+    expect(res.success).toBe(true);
+    expect(importCalls().length).toBeGreaterThan(1);
+    expect(maxInFlight).toBe(1);
+  });
+});
+
+describe('Requirement: every archive document has reconcilable provenance before any write', () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'wod-import-prov-')));
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  /** A raw exporter document: no provenance, placeholder art. */
+  function rawExport(name: string): Record<string, any> {
+    const doc = actorDoc(name, 3);
+    delete doc.flags;
+    doc.img = 'icons/svg/mystery-man.svg';
+    return doc;
+  }
+
+  async function stageRaw(file: string, names: string[]): Promise<string> {
+    await fs.writeFile(
+      path.join(dir, file),
+      buildZip(names.map(n => ({ name: `${n}.json`, data: JSON.stringify(rawExport(n)) })))
+    );
+    return file;
+  }
+
+  it('the server and the module agree on what "has a source id" means — BOTH flag scopes', async () => {
+    // The module resolves flags.wodchar.sourceId, then flags['wod20-combat'].sourceId,
+    // then the out-of-band field. A gate built on only the first and third would
+    // refuse documents the importer reconciles perfectly well.
+    const combat = rawExport('Combat');
+    combat.flags = { 'wod20-combat': { sourceId: 'src-combat' } };
+    const outOfBand = rawExport('OutOfBand');
+    outOfBand.sourceId = 'src-oob';
+    const wodchar = rawExport('Wodchar');
+    wodchar.flags = { wodchar: { sourceId: 'src-wodchar' } };
+
+    await fs.writeFile(
+      path.join(dir, 'scopes.zip'),
+      buildZip([
+        { name: 'combat.json', data: JSON.stringify(combat) },
+        { name: 'oob.json', data: JSON.stringify(outOfBand) },
+        { name: 'wodchar.json', data: JSON.stringify(wodchar) },
+      ])
+    );
+
+    const { tools } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: 'scopes.zip' });
+    expect(res.success).toBe(true);
+    expect(res.archive.entriesWithoutProvenance).toEqual([]);
+  });
+
+  it('a document whose flags name only wod20-char is NOT provenance', async () => {
+    // The exporter writes flags['wod20-char'] = { line, variant, exportedAt }. It is
+    // a different scope from both of the two that carry ids, and carries none.
+    const doc = rawExport('Exported');
+    doc.flags = { 'wod20-char': { line: 'mage', exportedAt: 0 } };
+    await fs.writeFile(
+      path.join(dir, 'wod20char.zip'),
+      buildZip([{ name: 'exported.json', data: JSON.stringify(doc) }])
+    );
+    const { tools, calls } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: 'wod20char.zip' });
+    expect(res.success).toBe(false);
+    expect(res.archive.entriesWithoutProvenance).toEqual(['exported.json']);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses an archive of raw exports before any write, listing every entry', async () => {
+    const p = await stageRaw('raw.zip', ['lena', 'jonas', 'mira']);
+    const { tools, calls } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p, overwrite: true });
+
+    expect(res.success).toBe(false);
+    for (const entry of ['lena.json', 'jonas.json', 'mira.json']) {
+      expect(res.error).toContain(entry);
+    }
+    // The two hazards this gate exists for are both named, because they are what a
+    // reader needs in order to act.
+    expect(res.error).toMatch(/duplicate/i);
+    expect(res.error).toMatch(/portrait/i);
+    expect(res.error).toMatch(/firstImport/);
+    expect(calls).toHaveLength(0); // not even a ping: nothing was sent
+  });
+
+  it('a declared first import proceeds and says, per actor, that a retry would duplicate', async () => {
+    const p = await stageRaw('first.zip', ['lena', 'jonas']);
+    const { tools } = makeTools(createAll, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: p, firstImport: true });
+
+    expect(res.success).toBe(true);
+    expect(res.counts.created).toBe(2);
+    expect(res.archive.firstImportDeclared).toBe(true);
+    for (const result of res.results) {
+      expect(result.entry).toBeTruthy();
+      expect(result.error).toMatch(/NO sourceId, so a re-run WOULD duplicate it/);
+    }
+  });
+
+  it('does NOT synthesise a source id from the entry name', async () => {
+    const p = await stageRaw('nosynth.zip', ['lena']);
+    const { tools, importCalls } = makeTools(createAll, { importDir: dir });
+    await tools.handleImportActor({ actorArchive: p, firstImport: true });
+    // Whatever crossed the bridge must carry no fabricated provenance: a synthesised
+    // id makes retry of THIS archive idempotent while making the same character,
+    // later imported under its real id, a second actor — an invisible duplicate.
+    const sent = importCalls()[0]?.data.actors[0];
+    expect(sent.sourceId).toBeUndefined();
+    expect(sent.flags?.wodchar?.sourceId).toBeUndefined();
+    expect(JSON.stringify(sent)).not.toContain('lena.json');
+  });
+
+  it('a dry run REPORTS missing provenance instead of refusing', async () => {
+    const p = await stageRaw('dry.zip', ['lena', 'jonas']);
+    const { tools } = makeTools(
+      async (method, data) => {
+        if (method === 'foundry-mcp-bridge.ping') return CAPABLE_PONG;
+        return {
+          dryRun: true,
+          results: data.actors.map((d: any) => ({
+            name: d.name,
+            id: null,
+            status: 'would-create',
+            folder: null,
+            sourceId: null,
+          })),
+        };
+      },
+      { importDir: dir }
+    );
+    const res: any = await tools.handleImportActor({ actorArchive: p, dryRun: true });
+
+    expect(res.success).toBe(true);
+    expect(res.dryRun).toBe(true);
+    expect(res.plan.archive.entriesWithoutProvenance).toEqual(['lena.json', 'jonas.json']);
+    for (const document of res.plan.documents) {
+      expect(document.provenance).toBe('missing');
+      expect(document.entry).toBeTruthy();
+    }
+  });
+});
+
+describe('Requirement: a dry run rehearses the unpack and reports the inventory and query cost', () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'wod-import-dry-')));
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const dryRunModule: QueryImpl = async (method, data) => {
+    if (method === 'foundry-mcp-bridge.ping') return CAPABLE_PONG;
+    return {
+      dryRun: true,
+      results: data.actors.map((d: any) => ({
+        name: d.name,
+        id: 'existing-id',
+        status: 'would-update',
+        folder: null,
+        sourceId: d.flags?.wodchar?.sourceId ?? null,
+      })),
+    };
+  };
+
+  it('reports the inventory, per-document verdicts and provenance, and writes nothing', async () => {
+    await fs.writeFile(
+      path.join(dir, 'plan.zip'),
+      buildZip([
+        { name: 'actors/', data: '' },
+        { name: 'actors/a.json', data: JSON.stringify(actorDoc('A', 40, 'src-a')) },
+        { name: 'actors/b.json', data: JSON.stringify(actorDoc('B', 40, 'src-b')) },
+        { name: 'actors/notes.txt', data: 'x' },
+      ])
+    );
+    const { tools, importCalls } = makeTools(dryRunModule, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: 'plan.zip', dryRun: true });
+
+    expect(res.dryRun).toBe(true);
+    expect(res.plan.archive.counts).toEqual({ entries: 4, documents: 2, ignored: 2, refused: 0 });
+    // The plan EXTENDS the dependency's structure rather than adding a second one:
+    // its own fields are all still there.
+    expect(res.plan).toMatchObject({
+      frameBytes: expect.any(Number),
+      chunkBytes: expect.any(Number),
+    });
+    expect(res.plan.documents.map((d: any) => d.entry)).toEqual(['actors/a.json', 'actors/b.json']);
+    for (const document of res.plan.documents) {
+      expect(document.provenance).toBe('resolved');
+      expect(document.compressedBytes).toBeGreaterThan(0);
+    }
+    expect(res.results.every((r: any) => r.status === 'would-update')).toBe(true);
+    // `archive` and `plan.archive` are the same object, not two descriptions.
+    expect(res.archive).toBe(res.plan.archive);
+    // Every query sent carried dryRun.
+    for (const call of importCalls()) expect(call.data.dryRun).toBe(true);
+  });
+
+  it('reports the query count AND the sum of their deadlines', async () => {
+    await fs.writeFile(
+      path.join(dir, 'cost.zip'),
+      buildZip(
+        Array.from({ length: 6 }, (_, i) => ({
+          name: `a${i}.json`,
+          data: JSON.stringify(actorDoc(`A${i}`, 47, `src-${i}`)),
+        }))
+      )
+    );
+    const { tools } = makeTools(dryRunModule, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: 'cost.zip', dryRun: true });
+
+    expect(res.plan.totals.queries).toBe(res.plan.queries.length);
+    expect(res.plan.totals.queries).toBeGreaterThan(1);
+    expect(res.plan.totals.summedTimeoutMs).toBe(
+      res.plan.queries.reduce((n: number, q: any) => n + q.timeoutMs, 0)
+    );
+    // The number a caller most needs: nothing else bounds it.
+    expect(res.plan.totals.summedTimeoutMs).toBeGreaterThanOrEqual(10000 * res.plan.totals.queries);
+  });
+
+  it('STILL refuses an archive it must not expand, without expanding it', async () => {
+    // A bomb: 1 KiB of bytes that are not even a valid deflate stream, declared as
+    // 100 MiB. Had the reader inflated to produce a friendlier report, it would
+    // have failed with a zlib error; the refusal naming the BOUND is the proof that
+    // the defence — not doing the work — held in dry-run mode too.
+    await fs.writeFile(
+      path.join(dir, 'bomb.zip'),
+      buildZip([
+        {
+          name: 'bomb.json',
+          data: '',
+          method: 8,
+          rawBody: Buffer.alloc(1024, 0xff),
+          declaredUncompressedSize: 104_857_600,
+        },
+      ])
+    );
+    const { tools, calls } = makeTools(dryRunModule, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: 'bomb.zip', dryRun: true });
+
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/per-entry bound/);
+    expect(res.error).not.toMatch(/Z_DATA_ERROR|incorrect header check/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('STILL refuses an encrypted entry in dry-run mode, by its real reason', async () => {
+    await fs.writeFile(
+      path.join(dir, 'enc.zip'),
+      buildZip([
+        { name: 'secret.json', data: JSON.stringify(actorDoc('S', 3, 'src-s')), flags: 0x0001 },
+      ])
+    );
+    const { tools, calls } = makeTools(dryRunModule, { importDir: dir });
+    const res: any = await tools.handleImportActor({ actorArchive: 'enc.zip', dryRun: true });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/encrypted entry/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses an archive with no documents, distinguishably from an unreadable one', async () => {
+    await fs.writeFile(path.join(dir, 'nodocs.zip'), buildZip([{ name: 'notes.txt', data: 'x' }]));
+    await fs.writeFile(path.join(dir, 'junk.zip'), Buffer.from('not a zip at all'));
+    const { tools } = makeTools(dryRunModule, { importDir: dir });
+
+    const noDocs: any = await tools.handleImportActor({ actorArchive: 'nodocs.zip' });
+    expect(noDocs.error).toMatch(/no actor documents found/);
+    const junk: any = await tools.handleImportActor({ actorArchive: 'junk.zip' });
+    expect(junk.error).toMatch(/not a readable archive/);
+  });
+});
+
+describe('the archive intake is declared honestly in the tool description', () => {
+  it('says what it does NOT buy, matching the actorPath prose', () => {
+    const { tools } = makeTools(createAll);
+    const props: any = tools.getToolDefinitions()[0].inputSchema.properties;
+    expect(props).toHaveProperty('actorArchive');
+    expect(props).toHaveProperty('firstImport');
+    const text: string = props.actorArchive.description;
+    expect(text).toMatch(/does NOT let you import more actors per call/);
+    expect(text).toMatch(/crosses the bridge in full/);
+    expect(text).toMatch(/wall\s*clock/i);
+    expect(text).toContain(String(WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS));
+    expect(text).toMatch(/sourceId/);
   });
 });

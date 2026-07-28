@@ -12,7 +12,9 @@ import {
   type DocChunk,
 } from './import-chunking.js';
 import { readActorDocFromPath, ImportPathError } from './import-path.js';
+import { readActorArchive, type ArchiveEntry } from './import-archive.js';
 import { COMPRESSION_CAPABILITY, gzippedBytes } from '../../wire-format.js';
+import { WOD_ARCHIVE_LIMITS } from '../../config.js';
 
 export interface WoDImportActorToolsOptions {
   foundryClient: FoundryClient;
@@ -52,7 +54,16 @@ const importActorSchema = z
     overwrite: z.boolean().optional(),
     // ── additive, all optional ────────────────────────────────────────────────
     actorPath: z.string().min(1).optional(),
-    actorPaths: z.array(z.string().min(1)).min(1).max(50).optional(),
+    // One number, one reason: the cap is aggregate wall clock, and an archive
+    // inherits it rather than declaring a second one (config.ts WOD_ARCHIVE_LIMITS).
+    actorPaths: z.array(z.string().min(1)).min(1).max(WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS).optional(),
+    /** One staged `.zip` of actor documents. See import-archive.ts. */
+    actorArchive: z.string().min(1).optional(),
+    /**
+     * Declares that these documents have never been imported, lifting the
+     * provenance refusal. Every affected actor is then reported as unreconcilable.
+     */
+    firstImport: z.boolean().optional(),
     /** Secondary cap on documents per bridge query. The byte budget is primary. */
     batchSize: z.number().int().min(1).max(10).optional(),
     /**
@@ -69,32 +80,35 @@ const importActorSchema = z
     /** Per-query timeout override (base; scaled up for over-budget chunks). */
     timeoutMs: z.number().int().min(1000).max(600000).optional(),
   })
-  .refine(
-    d => {
-      const inline = d.actor !== undefined || (Array.isArray(d.actors) && d.actors.length > 0);
-      const byPath =
-        d.actorPath !== undefined || (Array.isArray(d.actorPaths) && d.actorPaths.length > 0);
-      return inline || byPath;
-    },
-    {
-      message:
-        'Provide either inline docs (`actor` / `actors`) or staged paths (`actorPath` / `actorPaths`).',
-    }
-  )
-  .refine(
-    d => {
-      const inline = d.actor !== undefined || (Array.isArray(d.actors) && d.actors.length > 0);
-      const byPath =
-        d.actorPath !== undefined || (Array.isArray(d.actorPaths) && d.actorPaths.length > 0);
-      return !(inline && byPath);
-    },
-    {
-      // Silently concatenating the two sources would let a caller half-import
-      // from the wrong one and never notice.
-      message:
-        'Do not mix inline docs (`actor` / `actors`) with staged paths (`actorPath` / `actorPaths`) in one call.',
-    }
-  );
+  .refine(d => intakesUsed(d).length > 0, {
+    message:
+      'Provide inline docs (`actor` / `actors`), staged paths (`actorPath` / `actorPaths`), or one staged archive (`actorArchive`).',
+  })
+  .refine(d => intakesUsed(d).length === 1, {
+    // Silently concatenating two sources would let a caller half-import from the
+    // wrong one and never notice. The archive is a third sibling and is refused
+    // in combination for exactly that reason, not for a new one.
+    message:
+      'Do not mix intakes in one call: use exactly one of inline docs (`actor` / `actors`), staged paths (`actorPath` / `actorPaths`), or a staged archive (`actorArchive`).',
+  });
+
+/** Which of the three mutually exclusive intakes a request names. */
+function intakesUsed(d: {
+  actor?: unknown;
+  actors?: unknown;
+  actorPath?: unknown;
+  actorPaths?: unknown;
+  actorArchive?: unknown;
+}): Array<'inline' | 'paths' | 'archive'> {
+  const used: Array<'inline' | 'paths' | 'archive'> = [];
+  if (d.actor !== undefined || (Array.isArray(d.actors) && d.actors.length > 0))
+    used.push('inline');
+  if (d.actorPath !== undefined || (Array.isArray(d.actorPaths) && d.actorPaths.length > 0)) {
+    used.push('paths');
+  }
+  if (d.actorArchive !== undefined) used.push('archive');
+  return used;
+}
 
 /** Statuses the module can report per actor, plus the two the server adds. */
 export type ImportStatus =
@@ -122,14 +136,58 @@ export interface ImportActorResult {
   folder: string | null;
   sourceId?: string | null;
   error?: string;
+  /**
+   * The archive entry this document came from, when the intake was an archive.
+   *
+   * ATTRIBUTION ONLY. The status vocabulary above and the partial-failure /
+   * timeout semantics are untouched: a request naming ONE archive can return
+   * twenty per-actor outcomes, and an outcome that identifies only an actor name
+   * cannot be traced back to the document that produced it — a problem the
+   * per-path intake does not have, because there the caller wrote each path.
+   */
+  entry?: string;
+}
+
+/**
+ * The archive inventory, and what the provenance gate found.
+ *
+ * Declared once and emitted once: this is the object returned as the response's
+ * `archive`, and the SAME object reference the dry-run `plan.archive` points at.
+ * Two structures describing one archive would drift.
+ */
+export interface ArchiveReport {
+  /** The caller's own path, as supplied. Never a resolved absolute path. */
+  path: string;
+  archiveBytes: number;
+  declaredUncompressedBytes: number;
+  measuredUncompressedBytes: number;
+  counts: { entries: number; documents: number; ignored: number; refused: number };
+  entries: ArchiveEntry[];
+  /** Entries whose document carries no resolvable source id. */
+  entriesWithoutProvenance: string[];
+  /** Whether the caller lifted the provenance refusal for this request. */
+  firstImportDeclared: boolean;
 }
 
 const MODULE_CAPABILITY_DRY_RUN = 'importActors.dryRun';
+
+/**
+ * The one phrasing for "this actor cannot be reconciled".
+ *
+ * Extracted so the post-write `unknown` message and the pre-write first-import
+ * declaration state the same fact the same way — two phrasings for one fact is how
+ * a reader ends up believing they are two facts.
+ */
+const UNRECONCILABLE_NOTE = 'this doc carries NO sourceId, so a re-run WOULD duplicate it';
 
 /** One document's place in the transport plan. All sizes are MEASURED. */
 export interface TransportPlanDocument {
   name: string;
   sourceId: string | null;
+  /** The archive entry this document came from, for an archive import. */
+  entry?: string;
+  /** Whether a retry could reconcile this document. */
+  provenance: 'resolved' | 'missing';
   /** Serialized JSON bytes of the document itself. */
   bytes: number;
   /** Measured gzip bytes of the document. Never derived from a ratio. */
@@ -178,7 +236,19 @@ export interface TransportPlan {
     compressedBytes: number;
     queries: number;
     unsendable: number;
+    /**
+     * The sum of every query's deadline — the cost a caller most needs before
+     * committing, and the one nothing else bounds. `chunkTimeoutMs` caps each
+     * query at 600,000 ms and NEVER their total, so a 50-document archive is up to
+     * ~580 s of wall clock inside a single tool call.
+     */
+    summedTimeoutMs: number;
   };
+  /**
+   * The archive this request came from, when it came from one. Same object as the
+   * response's `archive` — the plan extends the report rather than restating it.
+   */
+  archive?: ArchiveReport;
 }
 
 function countByStatus(results: ImportActorResult[]) {
@@ -201,8 +271,26 @@ function labelOf(doc: Record<string, any>): string {
   return typeof doc?.name === 'string' && doc.name ? doc.name : '(unnamed)';
 }
 
+/**
+ * Resolve a document's source id in the module's OWN order of preference
+ * (`packages/foundry-module/src/data-access.ts:1304-1306`): the wodchar flag, then
+ * the combat module's flag, then the out-of-band `sourceId` field.
+ *
+ * THE ORDER AND THE SET MUST MATCH THE MODULE'S. This used to check only
+ * `flags.wodchar.sourceId ?? sourceId`, omitting the middle one — harmless while
+ * the value was merely echoed in a report, and NOT harmless now that it decides a
+ * pre-write refusal: the archive provenance gate would have refused documents the
+ * importer would have reconciled perfectly well. If either side gains a fourth
+ * source, both change together.
+ *
+ * Note `flags['wod20-char']` is NOT in this chain and must not be added to it: the
+ * wodchar exporter writes that scope (line, variant, exportedAt) and it carries no
+ * source id at all.
+ */
 function sourceIdOf(doc: Record<string, any>): string | null {
-  return doc?.flags?.wodchar?.sourceId ?? doc?.sourceId ?? null;
+  return (
+    doc?.flags?.wodchar?.sourceId ?? doc?.flags?.['wod20-combat']?.sourceId ?? doc?.sourceId ?? null
+  );
 }
 
 /**
@@ -313,6 +401,38 @@ export class WoDImportActorTools {
                 'Up to 50 staged .json actor document paths, each resolved inside WOD_IMPORT_DIR. ' +
                 'Same caveat as `actorPath`: not a way around the per-call work ceiling.',
             },
+            actorArchive: {
+              type: 'string',
+              description:
+                'Path to ONE staged .zip of actor .json documents, resolved only inside the ' +
+                'server’s configured WOD_IMPORT_DIR (unset ⇒ refused). Produce it with `zip -r`, ' +
+                'macOS Finder "Compress", or Windows "Send to → Compressed folder"; directory ' +
+                'entries, __MACOSX/ sidecars, `._*` files and non-.json entries are ignored and ' +
+                'listed in the response, never fatal. Cannot be combined with `actor`/`actors`/' +
+                '`actorPath`/`actorPaths`. SAME CAVEAT AS `actorPath`, AND MORE SO: this saves you ' +
+                `from enumerating up to ${WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS} paths and NOTHING else. ` +
+                'It does NOT let you import more actors per call — the cap is the same ' +
+                `${WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS}, because the constraint is aggregate wall ` +
+                'clock, not size — and every document still crosses the bridge in full, one ' +
+                'sequential query at a time. A 50-document archive is ~50 queries and can be ~580 s ' +
+                'inside this one call; `dryRun: true` reports the query count and the summed ' +
+                'deadline before you commit. Every document must carry a resolvable sourceId ' +
+                '(flags.wodchar.sourceId, flags["wod20-combat"].sourceId, or an out-of-band ' +
+                'sourceId) or the whole archive is refused before anything is written — raw ' +
+                '`wod character export` output carries none. Use `firstImport: true` only for ' +
+                'actors that have genuinely never been imported.',
+            },
+            firstImport: {
+              type: 'boolean',
+              description:
+                'Declares that the documents in `actorArchive` have NEVER been imported, lifting ' +
+                'the refusal for documents with no resolvable sourceId. Every affected actor comes ' +
+                'back flagged unreconcilable: re-running the request WOULD duplicate it. Do not use ' +
+                'this to refresh existing actors — inject flags.wodchar.sourceId instead. Note that ' +
+                'raw exporter output also carries img/prototypeToken of ' +
+                '"icons/svg/mystery-man.svg", which `overwrite: true` writes straight over a live ' +
+                'portrait; delete those two fields before re-importing.',
+            },
             batchSize: {
               type: 'number',
               description:
@@ -363,6 +483,8 @@ export class WoDImportActorTools {
       overwrite,
       actorPath,
       actorPaths,
+      actorArchive,
+      firstImport,
       batchSize,
       chunkBytes,
       stopOnError,
@@ -370,10 +492,29 @@ export class WoDImportActorTools {
       timeoutMs,
     } = parsed.data;
 
-    // ── Source resolution: inline OR staged paths (never both; enforced above).
+    // ── Source resolution: inline OR staged paths OR one archive (never more than
+    // one; enforced above).
     let docs: Array<Record<string, any>>;
+    /**
+     * Which archive entry each document came from, keyed by object identity.
+     *
+     * A Map rather than a wrapper type, deliberately: `chunkDocsByBytes` groups
+     * WHOLE DOCUMENTS and preserves their references, so attribution rides
+     * alongside chunking without touching its signature or its grouping.
+     * Attribution is metadata about a document, not a change to how documents are
+     * batched.
+     */
+    const entryOf = new Map<Record<string, any>, string>();
+    let archiveReport: ArchiveReport | undefined;
+
     const paths = actorPaths ?? (actorPath ? [actorPath] : []);
-    if (paths.length > 0) {
+    if (actorArchive !== undefined) {
+      const loaded = await this.loadArchive(actorArchive, firstImport === true, dryRun === true);
+      if ('error' in loaded) return loaded.error;
+      docs = loaded.docs;
+      archiveReport = loaded.report;
+      for (const [doc, entry] of loaded.entries) entryOf.set(doc, entry);
+    } else if (paths.length > 0) {
       const loaded: Array<Record<string, any>> = [];
       for (const p of paths) {
         let raw: unknown;
@@ -441,6 +582,12 @@ export class WoDImportActorTools {
       return { success: false, error: 'No actor documents to import.' };
     }
 
+    /** Attribution, added only where there is an archive entry to attribute to. */
+    const withEntry = (d: Record<string, any>): { entry?: string } => {
+      const entry = entryOf.get(d);
+      return entry !== undefined ? { entry } : {};
+    };
+
     // ── Dry run needs a module that honours it. An old module ignores the flag
     // and performs a REAL import, so this is checked before anything is sent.
     if (dryRun === true) {
@@ -475,6 +622,8 @@ export class WoDImportActorTools {
       baseTimeout,
       budget,
       connectionType,
+      entryOf,
+      ...(archiveReport !== undefined ? { archive: archiveReport } : {}),
     });
 
     // A real import refuses up front if any query is undeliverable: nothing is
@@ -493,6 +642,7 @@ export class WoDImportActorTools {
             `bridge quer${plan.queries.length === 1 ? 'y' : 'ies'} would not fit one transport frame. ` +
             `${blocked.map(q => q.reason).join(' ')}`,
           plan,
+          ...(archiveReport !== undefined ? { archive: archiveReport } : {}),
         };
       }
     }
@@ -506,6 +656,7 @@ export class WoDImportActorTools {
       overwrite: overwrite === true,
       dryRun: dryRun === true,
       fromPaths: paths.length > 0 ? paths.length : undefined,
+      fromArchive: actorArchive !== undefined ? archiveReport?.counts : undefined,
       connectionType,
     });
 
@@ -529,6 +680,7 @@ export class WoDImportActorTools {
             status: 'not-attempted',
             folder: folder ?? null,
             sourceId: sourceIdOf(d),
+            ...withEntry(d),
             error: 'not sent: an earlier chunk failed',
           });
         }
@@ -546,6 +698,7 @@ export class WoDImportActorTools {
             status: 'not-attempted',
             folder: folder ?? null,
             sourceId: sourceIdOf(d),
+            ...withEntry(d),
             error: `not sendable: ${planned.reason ?? 'exceeds one transport frame'}`,
           });
         }
@@ -579,6 +732,15 @@ export class WoDImportActorTools {
         const chunkResults: ImportActorResult[] = Array.isArray(result?.results)
           ? result.results
           : [];
+        // The module answers per document IN ORDER — the same assumption the
+        // short-response accounting below already relies on — so attribution is
+        // added positionally rather than by matching on actor name, which is not
+        // unique and which the module may have altered.
+        chunkResults.forEach((r, j) => {
+          const source = chunk.docs[j];
+          const entry = source !== undefined ? entryOf.get(source) : undefined;
+          if (entry !== undefined) r.entry = entry;
+        });
         results.push(...chunkResults);
 
         // A short response means the module stopped early (stopOnError). Account
@@ -591,6 +753,7 @@ export class WoDImportActorTools {
               status: 'not-attempted',
               folder: folder ?? null,
               sourceId: sourceIdOf(d),
+              ...withEntry(d),
               error: 'not reached: the batch stopped earlier in this chunk',
             });
           }
@@ -615,12 +778,27 @@ export class WoDImportActorTools {
             status: 'unknown',
             folder: folder ?? null,
             sourceId: sourceIdOf(d),
+            ...withEntry(d),
             error:
               `${message} — the query was not cancelled Foundry-side, so this actor may or may ` +
               `not have been created. Re-run the same request: it is idempotent by ` +
-              `flags.wodchar.sourceId${sourceIdOf(d) ? '' : ', but this doc carries NO sourceId, so a re-run WOULD duplicate it'}.`,
+              `flags.wodchar.sourceId${sourceIdOf(d) ? '' : `, but ${UNRECONCILABLE_NOTE}`}.`,
           });
         }
+      }
+    }
+
+    // ── A declared first import proceeded past the provenance gate, so say in the
+    // response what that costs, per actor, rather than leaving it to be discovered
+    // on the retry. Same wording as the `unknown` case above: one fact, one phrasing.
+    if (archiveReport?.firstImportDeclared === true) {
+      const unreconcilable = new Set(archiveReport.entriesWithoutProvenance);
+      for (const r of results) {
+        if (r.entry === undefined || !unreconcilable.has(r.entry)) continue;
+        r.error =
+          r.error !== undefined
+            ? `${r.error} Also: ${UNRECONCILABLE_NOTE}.`
+            : `Imported under \`firstImport\` — ${UNRECONCILABLE_NOTE}.`;
       }
     }
 
@@ -639,6 +817,7 @@ export class WoDImportActorTools {
         results,
         counts,
         batches: { total: chunks.length, completed },
+        ...(archiveReport !== undefined ? { archive: archiveReport } : {}),
         ...(dryRun === true ? { dryRun: true, plan } : {}),
       };
     }
@@ -649,6 +828,10 @@ export class WoDImportActorTools {
       results,
       counts,
       batches: { total: chunks.length, completed },
+      // Every entry accounted for, on a real import as well as a dry run: the
+      // counts sum to the archive's entry count, so an operator whose documents
+      // were all misnamed learns it from the report and not from an empty import.
+      ...(archiveReport !== undefined ? { archive: archiveReport } : {}),
       ...(dryRun === true ? { dryRun: true, plan } : {}),
       ...(dryRunHonoured === false
         ? {
@@ -658,6 +841,151 @@ export class WoDImportActorTools {
         : {}),
       ...(chunkError !== undefined ? { error: chunkError } : {}),
     };
+  }
+
+  /**
+   * Resolve, expand and vet one staged archive — the ENTIRE pre-query era.
+   *
+   * Nothing has been written when any of this fails, so every failure refuses the
+   * whole call and there is nothing to reconcile. This is the only failure era the
+   * archive adds, and it is the safe one; after the first query is issued, behaviour
+   * is identical to a batch of inline documents because it IS that path.
+   *
+   * A dry run performs all of it for real (that is what makes the plan worth
+   * having) with exactly one divergence: it does not refuse for MISSING PROVENANCE,
+   * it reports it. It still refuses an archive it must not expand, because there the
+   * defence IS not doing the work, and doing it in dry-run mode to produce a nicer
+   * report would defeat it.
+   */
+  private async loadArchive(
+    requested: string,
+    firstImport: boolean,
+    dryRun: boolean
+  ): Promise<
+    | {
+        docs: Array<Record<string, any>>;
+        report: ArchiveReport;
+        entries: Array<[Record<string, any>, string]>;
+      }
+    | { error: { success: false; error: string; archive?: ArchiveReport } }
+  > {
+    let contents;
+    try {
+      contents = await readActorArchive(requested, {
+        importDir: this.importDir,
+        maxBytes: this.importMaxBytes,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'unreadable';
+      if (error instanceof ImportPathError && error.reason.startsWith('path intake disabled')) {
+        // Same fault, same remedy, same wording as the staged-path branch: the
+        // cause is almost never the path but a backend that did not inherit the
+        // configured environment.
+        this.logger.error(
+          'Archive intake is unavailable: wod.importDir is unset in THIS backend process. ' +
+            'The backend is a singleton on port 31414 and serves every session with the ' +
+            'environment it was started with. Check the "Starting Foundry MCP Backend" line ' +
+            'in this log for the value it did resolve.'
+        );
+        return {
+          error: {
+            success: false,
+            error:
+              `Rejected actor archive — ${msg}. ` +
+              'This is a server-configuration fault, not a bad path: WOD_IMPORT_DIR is unset ' +
+              'in the running backend process. See docs/foundry-import.md ' +
+              '("Staged path intake needs a backend that inherited the config").',
+          },
+        };
+      }
+      return { error: { success: false, error: `Rejected actor archive — ${msg}` } };
+    }
+
+    // The document cap, enforced after classification and before chunking. NOT
+    // raised for an archive: the constraint is aggregate wall clock, and the
+    // transport's compression does nothing for it.
+    if (contents.documents.length > WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS) {
+      return {
+        error: {
+          success: false,
+          error:
+            `Rejected actor archive — ${requested}: ${contents.documents.length} actor documents, ` +
+            `and the maximum per call is ${WOD_ARCHIVE_LIMITS.MAX_DOCUMENTS}. That cap is about ` +
+            `aggregate WALL CLOCK, not size: each document is its own sequential bridge query with ` +
+            `its own deadline and nothing bounds their sum. Split the archive.`,
+        },
+      };
+    }
+
+    // Archive documents go through the SAME schema as inline and staged ones:
+    // exactly one validation path regardless of intake.
+    const docs: Array<Record<string, any>> = [];
+    const entries: Array<[Record<string, any>, string]> = [];
+    for (const document of contents.documents) {
+      const docParsed = actorDocSchema.safeParse(document.value);
+      if (!docParsed.success) {
+        const detail = docParsed.error.issues
+          .map(i => `${i.path.join('.') || '(root)'}: ${i.message}`)
+          .join('; ');
+        return {
+          error: {
+            success: false,
+            error: `Rejected actor archive — ${requested}, entry ${document.entry}: schema: ${detail}`,
+          },
+        };
+      }
+      const doc = docParsed.data as Record<string, any>;
+      docs.push(doc);
+      entries.push([doc, document.entry]);
+    }
+
+    const entriesWithoutProvenance = entries
+      .filter(([doc]) => sourceIdOf(doc) === null)
+      .map(([, entry]) => entry);
+
+    const report: ArchiveReport = {
+      path: requested,
+      archiveBytes: contents.archiveBytes,
+      declaredUncompressedBytes: contents.declaredUncompressedBytes,
+      measuredUncompressedBytes: contents.measuredUncompressedBytes,
+      counts: contents.counts,
+      entries: contents.entries,
+      entriesWithoutProvenance,
+      firstImportDeclared: firstImport,
+    };
+
+    // ── The provenance gate. Retry safety is per-document and rests entirely on
+    // the source id: an actor is stamped with it AT CREATION, so re-running a
+    // failed batch reconciles instead of duplicating. The existing report already
+    // warns that a document without one would duplicate on re-run — but it says so
+    // AFTER the write, and an archive is precisely the shape in which that mistake
+    // is made twenty times at once. So the check moves ahead of the write.
+    //
+    // DO NOT SYNTHESISE A SOURCE ID FROM THE ENTRY NAME. It is tempting, because
+    // `lena-vogt.json` → `archive:lena-vogt` makes retry of the SAME archive
+    // idempotent for free. It stamps fabricated provenance under a scope that means
+    // "this came from wodchar character X", so the same character later imported
+    // under its real id becomes a second actor — trading a visible duplicate for an
+    // invisible one.
+    if (entriesWithoutProvenance.length > 0 && !firstImport && !dryRun) {
+      return {
+        error: {
+          success: false,
+          error:
+            `Rejected actor archive — ${requested}: ${entriesWithoutProvenance.length} of ` +
+            `${docs.length} documents carry no resolvable sourceId, so nothing was written. ` +
+            `A retry would create a duplicate for every one of them, and with \`overwrite\` the ` +
+            `exporter's placeholder \`img\` would be written over the live portrait. Entries: ` +
+            `${entriesWithoutProvenance.join(', ')}. Remedy: inject flags.wodchar.sourceId (or ` +
+            `flags["wod20-combat"].sourceId, or a top-level sourceId) into each document — or, ` +
+            `if these actors have genuinely never been imported, pass \`firstImport: true\` and ` +
+            `accept that a retry will duplicate them.`,
+          archive: report,
+        },
+      };
+    }
+
+    return { docs, report, entries };
   }
 
   /**
@@ -754,6 +1082,9 @@ export class WoDImportActorTools {
       baseTimeout: number;
       budget: number;
       connectionType: 'websocket' | 'webrtc' | null;
+      /** Archive entry per document, by object identity. Empty for other intakes. */
+      entryOf: Map<Record<string, any>, string>;
+      archive?: ArchiveReport;
     }
   ): TransportPlan {
     const compressed = this.compressionNegotiated();
@@ -805,9 +1136,12 @@ export class WoDImportActorTools {
       });
 
       for (const doc of chunk.docs) {
+        const entry = ctx.entryOf.get(doc);
         documents.push({
           name: labelOf(doc),
           sourceId: sourceIdOf(doc),
+          ...(entry !== undefined ? { entry } : {}),
+          provenance: sourceIdOf(doc) !== null ? 'resolved' : 'missing',
           bytes: payloadBytes(doc),
           compressedBytes: gzippedBytes(doc),
           query: i + 1,
@@ -832,7 +1166,14 @@ export class WoDImportActorTools {
         compressedBytes: documents.reduce((n, d) => n + d.compressedBytes, 0),
         queries: queries.length,
         unsendable: queries.filter(q => !q.sendable).length,
+        // The one cost nothing else bounds. `chunkTimeoutMs` caps each query at
+        // 600,000 ms and never their sum, so a 50-document archive can be ~580 s
+        // of wall clock inside a single tool call.
+        summedTimeoutMs: queries.reduce((n, q) => n + q.timeoutMs, 0),
       },
+      // The SAME object the response returns as `archive`, so the plan is complete
+      // on its own without a second structure to keep in step.
+      ...(ctx.archive !== undefined ? { archive: ctx.archive } : {}),
     };
   }
 }
