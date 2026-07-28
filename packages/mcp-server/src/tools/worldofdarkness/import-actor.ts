@@ -7,9 +7,12 @@ import {
   chunkTimeoutMs,
   payloadBytes,
   DEFAULT_CHUNK_BUDGET_BYTES,
+  MAX_CHUNK_BUDGET_BYTES,
   TRANSPORT_MAX_MESSAGE_BYTES,
+  type DocChunk,
 } from './import-chunking.js';
 import { readActorDocFromPath, ImportPathError } from './import-path.js';
+import { COMPRESSION_CAPABILITY, gzippedBytes } from '../../wire-format.js';
 
 export interface WoDImportActorToolsOptions {
   foundryClient: FoundryClient;
@@ -52,8 +55,13 @@ const importActorSchema = z
     actorPaths: z.array(z.string().min(1)).min(1).max(50).optional(),
     /** Secondary cap on documents per bridge query. The byte budget is primary. */
     batchSize: z.number().int().min(1).max(10).optional(),
-    /** Per-query serialized byte budget. Defaults to the WebRTC-safe 50 KiB. */
-    chunkBytes: z.number().int().min(4096).max(TRANSPORT_MAX_MESSAGE_BYTES).optional(),
+    /**
+     * Per-query serialized byte budget, in UNCOMPRESSED bytes. A bound on Foundry
+     * WORK per query, not a transport ceiling: its max is `MAX_CHUNK_BUDGET_BYTES`
+     * (wall-clock, see import-chunking.ts), deliberately NOT the frame size, which
+     * is what it used to be validated against.
+     */
+    chunkBytes: z.number().int().min(4096).max(MAX_CHUNK_BUDGET_BYTES).optional(),
     /** `true` restores the historical abort-on-first-bad-actor behaviour. */
     stopOnError: z.boolean().optional(),
     /** Predict per-actor outcomes without writing anything. */
@@ -117,6 +125,61 @@ export interface ImportActorResult {
 }
 
 const MODULE_CAPABILITY_DRY_RUN = 'importActors.dryRun';
+
+/** One document's place in the transport plan. All sizes are MEASURED. */
+export interface TransportPlanDocument {
+  name: string;
+  sourceId: string | null;
+  /** Serialized JSON bytes of the document itself. */
+  bytes: number;
+  /** Measured gzip bytes of the document. Never derived from a ratio. */
+  compressedBytes: number;
+  /** 1-based index of the bridge query this document would land in. */
+  query: number;
+  /** That query's deadline, scaled for an over-budget chunk. */
+  timeoutMs: number;
+  sendable: boolean;
+  reason?: string;
+}
+
+export interface TransportPlanQuery {
+  index: number;
+  documents: number;
+  /** Uncompressed serialized bytes of the documents in this query. */
+  bytes: number;
+  /** Bytes this query would actually put on the wire, measured. */
+  wireBytes: number;
+  timeoutMs: number;
+  sendable: boolean;
+  reason?: string;
+}
+
+/**
+ * What the transport would do with this request. Computed without sending
+ * anything, and reported by `dryRun` so the one question a caller could not get
+ * answered — "would this even go?" — now has an answer.
+ */
+export interface TransportPlan {
+  transport: 'websocket' | 'webrtc' | null;
+  /** The negotiated wire encoding on the current connection. */
+  encoding: 'gzip' | 'plain';
+  /**
+   * The frame the wire size is checked against, and whether it binds on this
+   * transport (WebSocket's real limit is `ws`'s 100 MiB default).
+   */
+  frameBytes: number;
+  frameEnforced: boolean;
+  chunkBytes: number;
+  queries: TransportPlanQuery[];
+  documents: TransportPlanDocument[];
+  totals: {
+    documents: number;
+    bytes: number;
+    compressedBytes: number;
+    queries: number;
+    unsendable: number;
+  };
+}
 
 function countByStatus(results: ImportActorResult[]) {
   const n = (s: string) => results.filter(r => r.status === s).length;
@@ -191,7 +254,9 @@ export class WoDImportActorTools {
           're-importing the same sourceId is skipped, or updated in place when `overwrite` is true — ' +
           'so retrying a failed or timed-out batch never duplicates what it already created. ' +
           'A batch is split into ~50 KB byte-budgeted chunks (one bridge query each, sequential); ' +
-          'tested envelope is roughly one ~50 KB actor per query. `success: true` means THE BATCH ' +
+          'that budget bounds FOUNDRY WORK per query, not message size — the bridge compresses ' +
+          'query traffic (real WoD actors compress ~7-12x), so a single ~97 KB actor document ' +
+          'travels in one query and is NOT refused for its size. `success: true` means THE BATCH ' +
           'RAN, not that every actor succeeded — always read `counts` and the per-actor `status` ' +
           "('created' | 'updated' | 'skipped' | 'failed' | 'unknown' | 'not-attempted'). " +
           "'unknown' means that chunk's query did not report back and the actor MAY have been " +
@@ -226,8 +291,11 @@ export class WoDImportActorTools {
               description:
                 'Predict only: resolve each document against the existing actors’ ' +
                 'flags.wodchar.sourceId and report would-create / would-update / would-skip per ' +
-                'actor, WITHOUT writing anything (no actors, no folders). Refused if the connected ' +
-                'Foundry module is too old to honour it, rather than silently importing for real.',
+                'actor, WITHOUT writing anything (no actors, no folders). Also returns `plan`: per ' +
+                'document its uncompressed bytes, its MEASURED compressed bytes, which bridge query ' +
+                'it lands in, that query’s deadline, and whether it is sendable. Refused for exactly ' +
+                'one reason — the connected module is too old to honour dryRun and would import for ' +
+                'real; a size condition never pre-empts a dry run.',
             },
             actorPath: {
               type: 'string',
@@ -235,7 +303,8 @@ export class WoDImportActorTools {
                 'Path to ONE staged .json actor document, resolved only inside the server’s ' +
                 'configured WOD_IMPORT_DIR (unset ⇒ refused). Cannot be combined with `actor`/`actors`. ' +
                 'NOTE: this only saves you from retyping the document — the full document still ' +
-                'crosses the bridge, so it does NOT let you import more actors per call.',
+                'crosses the bridge (compressed, but in full), so it does NOT let you import more ' +
+                'actors per call: it is not a way around the per-call work ceiling.',
             },
             actorPaths: {
               type: 'array',
@@ -247,14 +316,17 @@ export class WoDImportActorTools {
             batchSize: {
               type: 'number',
               description:
-                'Max actors per bridge query (1-10). The ~50 KB byte budget still applies and ' +
+                'Max actors per bridge query (1-10). The ~50 KB work budget still applies and ' +
                 'usually binds first; set 1 to force strictly one actor per query on a slow world.',
             },
             chunkBytes: {
               type: 'number',
               description:
-                'Per-query serialized byte budget (default 51200, the WebRTC-safe threshold). ' +
-                'Lower it if queries time out; raising it above 65536 is refused.',
+                'Per-query budget in UNCOMPRESSED serialized bytes (default 51200), bounding ' +
+                'FOUNDRY WORK per query — roughly one actor’s worth — not message size. Lower it if ' +
+                'queries time out; raise it (max 1048576) to trade round-trips for longer, ' +
+                'size-scaled deadlines. It is NOT a per-document ceiling: a document larger than the ' +
+                'budget is sent alone with a scaled deadline, never refused for its size.',
             },
             stopOnError: {
               type: 'boolean',
@@ -352,35 +424,50 @@ export class WoDImportActorTools {
     const budget = chunkBytes ?? DEFAULT_CHUNK_BUDGET_BYTES;
     const chunks = chunkDocsByBytes(docs, budget, batchSize ?? Number.MAX_SAFE_INTEGER);
 
-    // ── Hard ceiling, enforced BEFORE any write. A document is indivisible, so
-    // one over-budget doc cannot be split. On WebRTC, SCTP drops any message over
-    // MAX_MESSAGE_SIZE and the server→Foundry path does not chunk (and swallows
-    // the send error), so the query would simply hang to its timeout: refuse it
-    // instead. On WebSocket the real limit is `ws`'s 100 MiB default, so the same
-    // document imports fine and must keep doing so — hence the transport check
-    // rather than a blanket ceiling.
+    const baseTimeout = timeoutMs ?? this.defaultTimeoutMs;
     const connectionType = this.safeConnectionType();
-    if (connectionType === 'webrtc') {
-      const tooBig = chunks.filter(c => c.bytes > TRANSPORT_MAX_MESSAGE_BYTES);
-      if (tooBig.length > 0) {
-        const names = tooBig.flatMap(c => c.docs.map(d => labelOf(d)));
-        const biggest = Math.max(...tooBig.map(c => c.bytes));
+
+    // ── The transport plan. A document's UNCOMPRESSED size is no longer grounds
+    // for refusal: compressed JSON is the bridge wire format, real WoD actor
+    // documents compress 6.9x-12x, and a ~97 KB actor now travels in one frame with
+    // 4x headroom. What is still refused — before anything is transmitted or
+    // written — is a query whose MEASURED size on the wire still exceeds one frame.
+    //
+    // MEASURED, NEVER PREDICTED. That is the load-bearing rule: the ratio is a
+    // property of the content, not of the format. An actor carrying its 118 KB WebP
+    // portrait as an embedded `data:` URI on both `img` and
+    // `prototypeToken.texture.src` is 369,259 bytes of JSON and 245,480 compressed
+    // — 1.5x, five times over the frame — against 6.9x-12x for ordinary documents.
+    // No ratio applied to an uncompressed size could tell those apart.
+    const plan = this.buildTransportPlan(chunks, {
+      folder,
+      overwrite,
+      dryRun,
+      stopOnError,
+      baseTimeout,
+      budget,
+      connectionType,
+    });
+
+    // A real import refuses up front if any query is undeliverable: nothing is
+    // written, so there is nothing to reconcile. A DRY RUN does not refuse — it
+    // reports the unsendable query inside the plan and still returns verdicts for
+    // every other document (see the loop below), because a dry run that declines to
+    // describe the request it was asked about leaves the caller with no other way
+    // to find out.
+    if (dryRun !== true) {
+      const blocked = plan.queries.filter(q => !q.sendable);
+      if (blocked.length > 0) {
         return {
           success: false,
           error:
-            `Request refused before writing anything: the active WebRTC transport caps one bridge ` +
-            `message at ${TRANSPORT_MAX_MESSAGE_BYTES} bytes and ${names.length} document(s) ` +
-            `(largest ${biggest} bytes: ${names.join(', ')}) exceed it even alone. ` +
-            `A single actor document cannot be split across queries — split the ACTOR instead: ` +
-            `import it with fewer embedded items and add the rest via ` +
-            `manage-world-items { action: "add-to-actor" }, or shrink oversized fields ` +
-            `(biography/notes). Per-call ceiling: ${TRANSPORT_MAX_MESSAGE_BYTES} bytes per document, ` +
-            `${budget} bytes per query by default (\`chunkBytes\`).`,
+            `Request refused before writing anything: ${blocked.length} of ${plan.queries.length} ` +
+            `bridge quer${plan.queries.length === 1 ? 'y' : 'ies'} would not fit one transport frame. ` +
+            `${blocked.map(q => q.reason).join(' ')}`,
+          plan,
         };
       }
     }
-
-    const baseTimeout = timeoutMs ?? this.defaultTimeoutMs;
 
     this.logger.info('Importing WoD actor(s)', {
       count: docs.length,
@@ -415,6 +502,23 @@ export class WoDImportActorTools {
             folder: folder ?? null,
             sourceId: sourceIdOf(d),
             error: 'not sent: an earlier chunk failed',
+          });
+        }
+        continue;
+      }
+
+      const planned = plan.queries[i];
+      if (planned !== undefined && !planned.sendable) {
+        // Dry run only (a real import already returned above). Report the bound
+        // per actor and keep going: the other queries still have verdicts to give.
+        for (const d of chunk.docs) {
+          results.push({
+            name: labelOf(d),
+            id: null,
+            status: 'not-attempted',
+            folder: folder ?? null,
+            sourceId: sourceIdOf(d),
+            error: `not sendable: ${planned.reason ?? 'exceeds one transport frame'}`,
           });
         }
         continue;
@@ -507,7 +611,7 @@ export class WoDImportActorTools {
         results,
         counts,
         batches: { total: chunks.length, completed },
-        ...(dryRun === true ? { dryRun: true } : {}),
+        ...(dryRun === true ? { dryRun: true, plan } : {}),
       };
     }
 
@@ -517,7 +621,7 @@ export class WoDImportActorTools {
       results,
       counts,
       batches: { total: chunks.length, completed },
-      ...(dryRun === true ? { dryRun: true } : {}),
+      ...(dryRun === true ? { dryRun: true, plan } : {}),
       ...(dryRunHonoured === false
         ? {
             warning:
@@ -535,6 +639,12 @@ export class WoDImportActorTools {
    * Without this, a new server against an old module (the two deploys are
    * independent) would send `dryRun: true`, the old module would ignore the
    * unknown key, and the "writes nothing" call would import every actor for real.
+   *
+   * THE ONLY REFUSAL A DRY RUN CAN RETURN. A size condition never pre-empts a dry
+   * run any more — an unsendable request is reported inside the plan, with the
+   * verdicts still returned. The two used to be indistinguishable in effect while
+   * needing opposite remedies, so this wording is deliberately and only about the
+   * MODULE VERSION.
    */
   private async assertDryRunSupported(): Promise<{ success: false; error: string } | null> {
     try {
@@ -544,17 +654,20 @@ export class WoDImportActorTools {
       return {
         success: false,
         error:
-          'dryRun refused: the connected Foundry MCP Bridge module does not advertise ' +
-          `"${MODULE_CAPABILITY_DRY_RUN}" (module version ${pong?.moduleVersion ?? 'unknown'}). ` +
-          'An older module ignores dryRun and performs a REAL import, so nothing was sent. ' +
-          'Update the Foundry module and reload the world as GM, or omit dryRun.',
+          'dryRun refused — MODULE VERSION, not request size. The connected Foundry MCP Bridge ' +
+          `module (version ${pong?.moduleVersion ?? 'unknown'}) does not advertise ` +
+          `"${MODULE_CAPABILITY_DRY_RUN}", and a module that old IGNORES the flag and performs a ` +
+          'REAL import, so nothing was sent. Remedy: update the Foundry MCP Bridge module and ' +
+          'reload the world as GM (a Foundry restart is not enough), or omit dryRun and import for ' +
+          'real. Nothing about the size of this request caused this refusal.',
       };
     } catch (error) {
       return {
         success: false,
-        error: `dryRun refused: could not confirm module capabilities — ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
+        error:
+          'dryRun refused — could not confirm the connected module’s capabilities (module version ' +
+          `unknown): ${error instanceof Error ? error.message : 'unknown error'}. Nothing was sent, ` +
+          'and nothing about the size of this request caused this refusal.',
       };
     }
   }
@@ -565,5 +678,133 @@ export class WoDImportActorTools {
     } catch {
       return null;
     }
+  }
+
+  /** Whether the transport has negotiated compression on the current connection. */
+  private compressionNegotiated(): boolean {
+    try {
+      return this.foundryClient.isCompressionNegotiated?.() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Bytes this query would ACTUALLY put on the wire.
+   *
+   * Delegates to the transport, which is the only thing that knows its own
+   * encoding: it compresses when the peer advertised compression on this
+   * connection, and sends plain JSON otherwise. When the transport cannot be asked
+   * (an older client object, or a test double that does not implement it), fall back
+   * to measuring the plain envelope — still a measurement of a real serialization,
+   * never a ratio applied to a size.
+   */
+  private measureQueryWireBytes(method: string, data: unknown): number {
+    try {
+      const measured = this.foundryClient.measureQueryWireBytes?.(method, data);
+      if (typeof measured === 'number' && measured >= 0) return measured;
+    } catch {
+      /* fall through to the plain measurement */
+    }
+    return payloadBytes({ type: 'mcp-query', id: 'query-0', data: { method, data } });
+  }
+
+  /**
+   * Describe what the transport would do with this request, sending nothing.
+   *
+   * Every size here is measured: `payloadBytes` for uncompressed JSON,
+   * `gzippedBytes` for a document's compressed size, and the transport's own
+   * encoder for a query's wire size. No compression ratio is ever assumed.
+   */
+  private buildTransportPlan(
+    chunks: DocChunk<Record<string, any>>[],
+    ctx: {
+      folder: string | undefined;
+      overwrite: boolean | undefined;
+      dryRun: boolean | undefined;
+      stopOnError: boolean | undefined;
+      baseTimeout: number;
+      budget: number;
+      connectionType: 'websocket' | 'webrtc' | null;
+    }
+  ): TransportPlan {
+    const compressed = this.compressionNegotiated();
+    // The frame binds on WebRTC only: SCTP caps a data-channel message at
+    // MAX_MESSAGE_SIZE, while `foundry-connector` sets no `maxPayload` on its
+    // WebSocket server, so `ws`'s 100 MiB default applies there and a large
+    // document imports today. Refusing on WebSocket would be a regression.
+    const frameEnforced = ctx.connectionType === 'webrtc';
+
+    const queries: TransportPlanQuery[] = [];
+    const documents: TransportPlanDocument[] = [];
+
+    chunks.forEach((chunk, i) => {
+      const payload: Record<string, unknown> = { actors: chunk.docs };
+      if (ctx.folder !== undefined) payload.folder = ctx.folder;
+      if (ctx.overwrite !== undefined) payload.overwrite = ctx.overwrite;
+      if (ctx.dryRun !== undefined) payload.dryRun = ctx.dryRun;
+      if (ctx.stopOnError !== undefined) payload.stopOnError = ctx.stopOnError;
+
+      const timeout = chunkTimeoutMs(chunk, ctx.baseTimeout, ctx.budget);
+      const wireBytes = this.measureQueryWireBytes('foundry-mcp-bridge.importActors', payload);
+      const overFrame = wireBytes > TRANSPORT_MAX_MESSAGE_BYTES;
+      const sendable = !(frameEnforced && overFrame);
+
+      const names = chunk.docs.map(d => labelOf(d)).join(', ');
+      const reason = sendable
+        ? undefined
+        : compressed
+          ? `Query ${i + 1} (${names}) measures ${chunk.bytes} bytes of JSON and ${wireBytes} bytes ` +
+            `COMPRESSED on the wire, over the ${TRANSPORT_MAX_MESSAGE_BYTES}-byte transport frame. ` +
+            `Compression cannot help: already-compressed content does not compress, and the usual ` +
+            `culprit is art embedded as a base64 \`data:\` URI. Remedy: sync the image to the Foundry ` +
+            `server and repoint \`img\` / \`prototypeToken.texture.src\` at the uploaded path — which ` +
+            `the importer's avatar-preservation requirement mandates anyway — then re-import.`
+          : `Query ${i + 1} (${names}) measures ${chunk.bytes} bytes of JSON and ${wireBytes} bytes ` +
+            `on the wire, over the ${TRANSPORT_MAX_MESSAGE_BYTES}-byte transport frame, because the ` +
+            `connected Foundry module does not advertise "${COMPRESSION_CAPABILITY}" so this message ` +
+            `would be sent UNCOMPRESSED. Remedy: update the Foundry MCP Bridge module and reload the ` +
+            `world as GM; compressed, a document this size normally measures 6.9x-12x smaller.`;
+
+      queries.push({
+        index: i + 1,
+        documents: chunk.docs.length,
+        bytes: chunk.bytes,
+        wireBytes,
+        timeoutMs: timeout,
+        sendable,
+        ...(reason !== undefined ? { reason } : {}),
+      });
+
+      for (const doc of chunk.docs) {
+        documents.push({
+          name: labelOf(doc),
+          sourceId: sourceIdOf(doc),
+          bytes: payloadBytes(doc),
+          compressedBytes: gzippedBytes(doc),
+          query: i + 1,
+          timeoutMs: timeout,
+          sendable,
+          ...(reason !== undefined ? { reason } : {}),
+        });
+      }
+    });
+
+    return {
+      transport: ctx.connectionType,
+      encoding: compressed ? 'gzip' : 'plain',
+      frameBytes: TRANSPORT_MAX_MESSAGE_BYTES,
+      frameEnforced,
+      chunkBytes: ctx.budget,
+      queries,
+      documents,
+      totals: {
+        documents: documents.length,
+        bytes: documents.reduce((n, d) => n + d.bytes, 0),
+        compressedBytes: documents.reduce((n, d) => n + d.compressedBytes, 0),
+        queries: queries.length,
+        unsendable: queries.filter(q => !q.sendable).length,
+      },
+    };
   }
 }

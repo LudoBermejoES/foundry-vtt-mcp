@@ -82,6 +82,29 @@ export class FoundryClient {
     return this.query('foundry-mcp-bridge.ping');
   }
 
+  /**
+   * Capabilities the connected module advertised on the CURRENT connection, or
+   * `null` if the handshake has not completed. Discarded on disconnect.
+   */
+  getPeerCapabilities(): readonly string[] | null {
+    return this.connector.getPeerCapabilities();
+  }
+
+  /** True only once the peer advertised compression on this connection. */
+  isCompressionNegotiated(): boolean {
+    return this.connector.isCompressionNegotiated();
+  }
+
+  /**
+   * Serialized bytes the transport would actually put on the wire for this query —
+   * compressed when compression is negotiated, plain otherwise. Callers that need
+   * to know whether a payload fits in a frame MEASURE with this; they must never
+   * predict a compressed size from an assumed ratio.
+   */
+  measureQueryWireBytes(method: string, data?: any): number {
+    return this.connector.measureQueryWireBytes(method, data);
+  }
+
   getConnectionInfo(): any {
     return this.connector.getConnectionInfo();
   }

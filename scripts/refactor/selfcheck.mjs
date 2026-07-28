@@ -214,12 +214,24 @@ check(
   `notInProgram=[${capture.passes.checker.filesNotInProgram.join(', ')}] scanned-test-or-fixture=[${scanned.filter(isTestOrFixture).join(', ')}]`
 );
 // 65 is the gate figure and is asserted exactly. The contributing-file list is derived:
-// every scanned file reaches the facade except `socket-bridge.ts` and the fixture.
+// every scanned file reaches the facade except the ones named here, each of which does not
+// touch `FoundryDataAccess` at all:
+//   - `socket-bridge.ts`      — transport; it dispatches to CONFIG.queries, never to the facade.
+//   - `__fixtures__/`         — the fake Foundry world, which the facade is driven against.
+//   - `wire-format.test.ts`, `webrtc-connection.test.ts` — transport tests added by
+//     lift-bridge-per-document-size-ceiling, for the same reason as socket-bridge.ts.
+// Named rather than counted, exactly as the comment above records: a green tool must not
+// report red because a pass added a test file that was never about this class.
+const nonReachingScanned = [
+  '/socket-bridge.ts',
+  '/wire-format.test.ts',
+  '/webrtc-connection.test.ts',
+];
 const expectedContributors = scanned
-  .filter(f => !f.endsWith('/socket-bridge.ts') && !f.includes('/__fixtures__/'))
+  .filter(f => !nonReachingScanned.some(suffix => f.endsWith(suffix)) && !f.includes('/__fixtures__/'))
   .sort();
 check(
-  'the union finds 65 members, contributed by every scanned file but socket-bridge and the fixture',
+  'the union finds 65 members, contributed by every scanned file that reaches the facade',
   capture.passes.union.count === 65 &&
     capture.passes.union.contributingFiles.slice().sort().join(',') ===
       expectedContributors.join(','),

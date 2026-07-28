@@ -1,5 +1,15 @@
-import { MODULE_ID, CONNECTION_STATES } from './constants.js';
+import { MODULE_ID, CONNECTION_STATES, WEBRTC_CONSTANTS } from './constants.js';
 import { WebRTCConnection, type WebRTCConfig } from './webrtc-connection.js';
+import {
+  compressMessage,
+  decodeFailureResponse,
+  decompressEnvelope,
+  isCompressedEnvelope,
+  isCompressionAvailable,
+  mustSendPlain,
+  WireDecodeError,
+  type WireMeta,
+} from './wire-format.js';
 
 export interface BridgeConfig {
   enabled: boolean;
@@ -185,28 +195,64 @@ export class SocketBridge {
   private setupEventHandlers(): void {
     if (!this.ws) return;
 
-    this.ws.onmessage = event => {
+    this.ws.onmessage = async event => {
       try {
         const message = JSON.parse(event.data);
-        this.handleMessage(message);
+        // A receiver accepts BOTH encodings at all times, on every transport,
+        // regardless of what it sends: it does not control its peer's version.
+        if (isCompressedEnvelope(message)) {
+          await this.dispatchCompressed(message);
+          return;
+        }
+        await this.handleMessage(message, { compressed: false });
       } catch (error) {
         this.log(`Failed to parse message: ${error}`);
       }
     };
   }
 
-  private async handleMessage(message: any): Promise<void> {
+  /** Decode a compressed envelope, or answer the request it belonged to. */
+  private async dispatchCompressed(envelope: any): Promise<void> {
+    try {
+      const inner = await decompressEnvelope(envelope, WEBRTC_CONSTANTS.MAX_DECOMPRESSED_BYTES);
+      await this.handleMessage(inner, { compressed: true });
+    } catch (error) {
+      const decodeError =
+        error instanceof WireDecodeError
+          ? error
+          : new WireDecodeError(
+              error instanceof Error ? error.message : String(error),
+              envelope?.originalId,
+              envelope?.originalType
+            );
+      this.log(`Failed to decode compressed message: ${decodeError.message}`);
+      void this.sendMessage(decodeFailureResponse(decodeError));
+    }
+  }
+
+  /**
+   * `meta` records how the message arrived. A response is compressed IF AND ONLY
+   * IF the request it answers was — the request is itself proof the peer speaks
+   * compression, so there is no reverse negotiation to invent and the two
+   * directions cannot disagree. Unsolicited emissions (`emitToServer`) and the
+   * transport liveness reply stay plain: at their size compression makes them
+   * BIGGER (a `pong` measures 79 bytes plain against 225 enveloped).
+   */
+  private async handleMessage(message: any, meta: WireMeta = { compressed: false }): Promise<void> {
     try {
       if (message.type === 'mcp-query') {
-        await this.handleMCPQuery(message.data, response => {
-          this.sendMessage({
-            type: 'mcp-response',
-            id: message.id,
-            data: response,
-          });
-        });
+        await this.handleMCPQuery(message.data, response =>
+          this.sendMessage(
+            {
+              type: 'mcp-response',
+              id: message.id,
+              data: response,
+            },
+            { compress: meta.compressed }
+          )
+        );
       } else if (message.type === 'ping') {
-        this.sendMessage({
+        void this.sendMessage({
           type: 'pong',
           id: message.id,
           data: { timestamp: Date.now(), status: 'ok' },
@@ -262,7 +308,14 @@ export class SocketBridge {
     }
   }
 
-  private async handleMCPQuery(data: any, callback: (response: any) => void): Promise<void> {
+  private async handleMCPQuery(
+    data: any,
+    callback: (response: any) => void | Promise<void>
+  ): Promise<void> {
+    // The response is built first and delivered once, OUTSIDE the try: `callback`
+    // now encodes and sends (it may compress, hence it may reject), and a throw
+    // from the send must not be mistaken for a query failure and answered twice.
+    let response: any;
     try {
       this.log(`Handling MCP query: ${data.method}`);
 
@@ -278,16 +331,18 @@ export class SocketBridge {
       const result = await handler(data.data || {});
 
       this.log(`Query completed: ${data.method}`);
-      callback({ success: true, data: result });
+      response = { success: true, data: result };
     } catch (error) {
       this.log(
         `Query failed: ${data.method} - ${error instanceof Error ? error.message : 'Unknown error'}`
       );
-      callback({
+      response = {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      };
     }
+
+    await callback(response);
   }
 
   private async handleJobCompleted(data: any): Promise<void> {
@@ -479,29 +534,47 @@ export class SocketBridge {
     }, delay);
   }
 
-  private sendMessage(message: any): void {
+  /**
+   * `async` for exactly one reason: `CompressionStream` is asynchronous. The body
+   * runs synchronously up to the first `await`, so a plain send (every control
+   * message, and every send from a runtime without the primitive) is still
+   * dispatched synchronously — which is what `emitToServer` relies on.
+   */
+  private async sendMessage(message: any, opts: { compress?: boolean } = {}): Promise<void> {
     if (this.connectionState !== CONNECTION_STATES.CONNECTED) {
       this.log(`Cannot send message - not connected`);
       return;
     }
 
     try {
+      const compress =
+        opts.compress === true && !mustSendPlain(message) && isCompressionAvailable();
+      const payload = compress ? await compressMessage(message) : message;
+
       if (this.activeConnectionType === 'webrtc' && this.webrtc) {
-        this.webrtc.sendMessage(message);
+        this.webrtc.sendMessage(payload);
       } else if (this.activeConnectionType === 'websocket' && this.ws) {
-        this.ws.send(JSON.stringify(message));
+        this.ws.send(JSON.stringify(payload));
       } else {
         this.log('No active connection to send message');
         return;
       }
-      this.log(`Sent message via ${this.activeConnectionType}: ${message.type}`);
+      this.log(
+        `Sent message via ${this.activeConnectionType}: ${message.type}${
+          compress ? ' (compressed)' : ''
+        }`
+      );
     } catch (error) {
       this.log(`Failed to send message: ${error}`);
     }
   }
 
+  /**
+   * Unsolicited, tiny, and sync-emitted — and therefore always PLAIN: at these
+   * sizes compression makes the message bigger, and nothing is waiting on it.
+   */
   emitToServer(event: string, data?: any): void {
-    this.sendMessage({
+    void this.sendMessage({
       type: event,
       data: data,
       timestamp: Date.now(),

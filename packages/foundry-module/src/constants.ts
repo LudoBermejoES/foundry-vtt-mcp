@@ -49,6 +49,30 @@ export const TOKEN_DISPOSITIONS = {
 } as const;
 
 /**
+ * WebRTC / SCTP transport sizes.
+ *
+ * MIRROR of `packages/mcp-server/src/config.ts` `WEBRTC_CONSTANTS`, field for
+ * field, and asserted equal by `packages/mcp-server/src/wire-format.test.ts` —
+ * a comment saying "keep in sync" is not a mechanism, a failing test is. These
+ * used to be declared inline in a method body in `webrtc-connection.ts`; they
+ * live here because this change adds a third consumer (the decompression
+ * bound).
+ *
+ * NOT imported from `@foundry-mcp/shared`, which does exist: this package is
+ * loaded by the browser as ESM (`module.json` `"esmodules": ["dist/main.js"]`)
+ * and built by plain `tsc` with no bundler, so a bare specifier would not
+ * resolve at runtime, and the package declares only `socket.io-client`.
+ */
+export const WEBRTC_CONSTANTS = {
+  /** SCTP maxMessageSize — hard limit from the WebRTC specification. */
+  MAX_MESSAGE_SIZE: 65536,
+  /** Threshold above which an outbound message is fragmented. */
+  CHUNK_SIZE: 50 * 1024,
+  /** Decompression-bomb bound; see the server-side comment for the rationale. */
+  MAX_DECOMPRESSED_BYTES: 8 * 1024 * 1024,
+} as const;
+
+/**
  * Error messages
  */
 export const ERROR_MESSAGES = {

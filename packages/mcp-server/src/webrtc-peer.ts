@@ -2,11 +2,27 @@ import { RTCPeerConnection, RTCSessionDescription } from 'werift';
 import { Logger } from './logger.js';
 import type { Config } from './config.js';
 import { WEBRTC_CONSTANTS } from './config.js';
+import { decompressEnvelope, isCompressedEnvelope, WireDecodeError } from './wire-format.js';
 
 export interface WebRTCPeerOptions {
   config: Config['foundry']['webrtc'];
   logger: Logger;
   onMessage: (message: any) => Promise<void>;
+  /**
+   * Fired when the data channel opens, i.e. the first moment a query can be
+   * issued on this connection. The connector uses it to run the capability
+   * handshake — the negotiation cannot happen at offer/answer time, because the
+   * channel is not open yet.
+   */
+  onOpen?: () => void;
+  /**
+   * Fired when the data channel closes. The connector uses it to DISCARD the
+   * negotiated capability: a closed channel is a disconnect, and the peer behind
+   * the next one may be a different module version (after a world reload it
+   * usually is). A cached "yes" that outlived its connection would have the server
+   * compressing into a module that cannot decompress.
+   */
+  onClose?: () => void;
 }
 
 /**
@@ -19,6 +35,8 @@ export class WebRTCPeer {
   private logger: Logger;
   private config: Config['foundry']['webrtc'];
   private onMessageHandler: (message: any) => Promise<void>;
+  private onOpenHandler: (() => void) | undefined;
+  private onCloseHandler: (() => void) | undefined;
   private isConnected = false;
   private pendingChunks: Map<
     string,
@@ -32,10 +50,12 @@ export class WebRTCPeer {
   > = new Map();
   private chunkCleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor({ config, logger, onMessage }: WebRTCPeerOptions) {
+  constructor({ config, logger, onMessage, onOpen, onClose }: WebRTCPeerOptions) {
     this.config = config;
     this.logger = logger.child({ component: 'WebRTCPeer' });
     this.onMessageHandler = onMessage;
+    this.onOpenHandler = onOpen;
+    this.onCloseHandler = onClose;
 
     // Start cleanup interval for timed-out chunks
     this.startChunkCleanup();
@@ -136,11 +156,21 @@ export class WebRTCPeer {
     this.dataChannel.onopen = () => {
       this.logger.info('[WebRTC] ✓ Data channel opened - connection fully ready!');
       this.isConnected = true;
+      try {
+        this.onOpenHandler?.();
+      } catch (error) {
+        this.logger.error('[WebRTC] onOpen handler threw', error);
+      }
     };
 
     this.dataChannel.onclose = () => {
       this.logger.info('[WebRTC] Data channel closed');
       this.isConnected = false;
+      try {
+        this.onCloseHandler?.();
+      } catch (error) {
+        this.logger.error('[WebRTC] onClose handler threw', error);
+      }
     };
 
     this.dataChannel.onerror = (error: any) => {
@@ -161,13 +191,7 @@ export class WebRTCPeer {
           return;
         }
 
-        this.logger.debug('Parsed message successfully', {
-          type: message.type,
-          requestId: message.requestId,
-          hasData: !!message.data,
-        });
-        await this.onMessageHandler(message);
-        this.logger.debug('Message handler completed', { type: message.type });
+        await this.dispatch(message);
       } catch (error) {
         this.logger.error('Failed to parse or handle message', {
           error: error instanceof Error ? error.message : String(error),
@@ -177,17 +201,109 @@ export class WebRTCPeer {
     };
   }
 
-  sendMessage(message: any): void {
-    if (!this.dataChannel || !this.isConnected) {
-      this.logger.warn('Cannot send message - data channel not open');
+  /**
+   * Route one fully-received message by its DECLARED type: unwrap a
+   * `compressed-message` envelope, then hand it to the application. Never sniffs
+   * the payload bytes and never branches on `typeof event.data` — the wire is
+   * textual so that this stays a single discrimination axis.
+   *
+   * Reached both from `onmessage` and from the end of chunk reassembly, because a
+   * compressed response large enough to be fragmented arrives as fragments of a
+   * compressed envelope.
+   */
+  private async dispatch(message: any): Promise<void> {
+    if (isCompressedEnvelope(message)) {
+      let inner: any;
+      try {
+        inner = decompressEnvelope(message, WEBRTC_CONSTANTS.MAX_DECOMPRESSED_BYTES);
+      } catch (error) {
+        const decodeError =
+          error instanceof WireDecodeError
+            ? error
+            : new WireDecodeError(
+                error instanceof Error ? error.message : String(error),
+                message.originalId,
+                message.originalType
+              );
+        this.logger.error('Failed to decode compressed message', {
+          error: decodeError.message,
+          originalType: message.originalType,
+          originalId: message.originalId,
+        });
+        // Answer the request that caused it rather than dropping it: a dropped
+        // decode failure costs the caller its whole deadline and is reported as a
+        // timeout, which points at the wrong subsystem. A failed `mcp-response`
+        // keyed by the originating query id is what rejects the pending promise.
+        if (decodeError.originalId) {
+          await this.onMessageHandler({
+            type: 'mcp-response',
+            id: decodeError.originalId,
+            data: { success: false, error: decodeError.message },
+          });
+        }
+        return;
+      }
+      this.logger.debug('Decoded compressed message', {
+        type: inner?.type,
+        originalId: message.originalId,
+        wireBytes: message.payload?.length,
+      });
+      await this.onMessageHandler(inner);
       return;
     }
 
+    this.logger.debug('Parsed message successfully', {
+      type: message.type,
+      requestId: message.requestId,
+      hasData: !!message.data,
+    });
+    await this.onMessageHandler(message);
+    this.logger.debug('Message handler completed', { type: message.type });
+  }
+
+  /**
+   * Send one message, THROWING if it could not be handed to the transport.
+   *
+   * This used to log and return. With no application-level size check in front of
+   * the send any more, this throw is the only mechanism that distinguishes "could
+   * not send" from "sent and never answered": the caller (`FoundryConnector.query`)
+   * has already armed a timeout, so a swallowed failure surfaces a full deadline
+   * later as `Query timeout: <method>` — for a message that never left the
+   * process. The module's own sender already re-throws
+   * (foundry-module/src/webrtc-connection.ts); this matches it.
+   *
+   * Internal, unsolicited sends (chunk-reassembly errors, chunk-timeout notices)
+   * use `trySendMessage` instead: they run inside an event handler or a timer,
+   * where there is no caller to reject and a throw would be unhandled.
+   */
+  sendMessage(message: any): void {
+    if (!this.dataChannel || !this.isConnected) {
+      throw new Error('WebRTC data channel is not open');
+    }
+
+    const json = JSON.stringify(message);
     try {
-      this.dataChannel.send(JSON.stringify(message));
-      this.logger.debug('Sent WebRTC message', { type: message.type });
+      this.dataChannel.send(json);
+      this.logger.debug('Sent WebRTC message', { type: message.type, bytes: json.length });
     } catch (error) {
-      this.logger.error('Failed to send WebRTC message', error);
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `WebRTC data channel refused a ${Buffer.byteLength(json, 'utf8')}-byte ${
+          message?.type ?? 'unknown'
+        } message: ${reason}`
+      );
+    }
+  }
+
+  /** Best-effort send for unsolicited notices; never throws. */
+  private trySendMessage(message: any): void {
+    try {
+      this.sendMessage(message);
+    } catch (error) {
+      this.logger.error('Failed to send WebRTC message', {
+        type: message?.type,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -303,7 +419,9 @@ export class WebRTCPeer {
           type: completeMessage.type,
           id: completeMessage.id,
         });
-        await this.onMessageHandler(completeMessage);
+        // Through `dispatch`, not straight to the handler: a compressed response
+        // big enough to be fragmented reassembles into a compressed ENVELOPE.
+        await this.dispatch(completeMessage);
         this.logger.debug('Reassembled message handler completed', {
           type: completeMessage.type,
         });
@@ -316,7 +434,7 @@ export class WebRTCPeer {
 
         // Send error response to client if we have a requestId
         if (originalId) {
-          this.sendMessage({
+          this.trySendMessage({
             type: 'error',
             requestId: originalId,
             error: 'Failed to reassemble chunked message',
@@ -353,7 +471,7 @@ export class WebRTCPeer {
 
           // Send error response to client if we have a requestId
           if (pending.originalId) {
-            this.sendMessage({
+            this.trySendMessage({
               type: 'error',
               requestId: pending.originalId,
               error: 'Chunked message timeout',

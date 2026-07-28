@@ -814,6 +814,34 @@ cd packages/foundry-module && node_modules/.bin/tsc --noEmit   # Stage B
      ceiling. On WebSocket it is not refused, because `ws`'s 100 MiB default means
      it works there today and refusing would be a regression.
 
+> ### SUPERSEDED — the paragraph immediately above, and the transport asymmetry it rests on
+>
+> **`lift-bridge-per-document-size-ceiling` replaces all of it.** Kept for the
+> record of why the refusal existed, not as a description of current behaviour.
+> What changed, in one place —
+> [`transport-wire-format.md`](transport-wire-format.md) is now the single live
+> description:
+>
+> - **Compressed JSON is the bridge wire format.** Every `mcp-query` /
+>   `mcp-response` travels gzipped inside a `compressed-message` envelope once the
+>   module advertises `transport.compression.gzip`. Real WoD actor documents
+>   compress 6.9x–12.5x, so the ~97 KB document this section refused now fits one
+>   frame with ~4x headroom.
+> - **`chunkBytes` is no longer bounded by `MAX_MESSAGE_SIZE`.** Its max is
+>   `MAX_CHUNK_BUDGET_BYTES` (1 MiB) and its only justification is wall-clock:
+>   transport size stopped being a reason to chunk.
+> - **The `connectionType === 'webrtc'` size refusal is deleted.** What remains is
+>   a refusal on the **measured compressed** size of the message that would
+>   actually be sent — never a ratio applied to an uncompressed size.
+> - **The silent send is fixed.** `WebRTCPeer.sendMessage` re-throws and the
+>   pending query rejects at once, so an undeliverable message no longer surfaces
+>   a deadline later as `Query timeout`.
+> - **The asymmetry itself is unchanged and still recorded as debt:** the
+>   server→Foundry direction still does not fragment. Compression made that
+>   unnecessary for every realistic payload rather than fixing it; the designed
+>   backstop and its trigger are in
+>   [`transport-wire-format.md`](transport-wire-format.md).
+
 2. **Should `batchSize` default to 1 or 2?** 1 is provably safe from today's
    evidence; 2 halves the round-trips. Needs one timing measurement of a
    single-actor `importActors` on the production world to decide.

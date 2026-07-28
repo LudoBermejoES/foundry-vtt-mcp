@@ -1,6 +1,7 @@
 import { MODULE_ID } from './constants.js';
 import { FoundryDataAccess } from './data-access.js';
 import { ComfyUIManager } from './comfyui-manager.js';
+import { COMPRESSION_CAPABILITY, isCompressionAvailable } from './wire-format.js';
 
 export class QueryHandlers {
   public dataAccess: FoundryDataAccess;
@@ -432,6 +433,15 @@ export class QueryHandlers {
         // so the server pre-flights this and refuses instead of guessing.
         'getCharacterInfo.include',
         'findActorsByFlag',
+        // Transport (0.9.5). Advertised ONLY when the primitive is actually
+        // present in this engine — the advertisement IS the feature detection,
+        // so there is no browser-version table to maintain and a runtime without
+        // CompressionStream is simply never sent compressed traffic. The server
+        // caches this per connection and discards it on disconnect (the module
+        // may be a different version after a world reload), and sends plain JSON
+        // until it has seen it. This entry is why the handshake itself must stay
+        // uncompressed: it cannot ride inside the encoding it negotiates.
+        ...(isCompressionAvailable() ? [COMPRESSION_CAPABILITY] : []),
       ],
     };
   }

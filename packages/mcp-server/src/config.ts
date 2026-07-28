@@ -178,4 +178,31 @@ export const WEBRTC_CONSTANTS = {
    * Background task runs periodically to remove incomplete messages
    */
   CHUNK_CLEANUP_INTERVAL_MS: 10000, // 10 seconds
+
+  /**
+   * Maximum size a compressed message may decompress to, in bytes.
+   *
+   * SECURITY. Same class of hazard as MAX_CHUNKS_PER_MESSAGE above: a small
+   * payload that costs an attacker nothing can expand without bound on the
+   * receiver ("decompression bomb"). gzip's theoretical ceiling is ~1032:1, so
+   * one 64 KiB frame could otherwise demand ~64 MB. `DecompressionStream` and
+   * `zlib` impose no limit of their own, so this one is enforced by the
+   * receivers (see wire-format.ts and foundry-module/src/wire-format.ts) while
+   * output is being read, never after materialising it.
+   *
+   * Why 8 MiB:
+   *   - 4x the DEFAULT staged-document gate (`wod.importMaxBytes`, 2 MiB), so
+   *     every legitimate import fits with headroom. An operator who raises
+   *     WOD_IMPORT_MAX_BYTES beyond 8 MiB must raise this too.
+   *   - 128x one frame (65,536 B), i.e. it accepts any expansion ratio up to
+   *     128x, an order of magnitude above the 6.9x-12.5x measured on real
+   *     WoD actor documents.
+   *   - 6x TIGHTER than the memory a chunk-bombed message may already claim
+   *     (MAX_CHUNKS_PER_MESSAGE * CHUNK_SIZE = 50 MB), so it does not loosen the
+   *     transport's existing exposure.
+   *
+   * Keep in sync with packages/foundry-module/src/constants.ts (asserted equal
+   * by wire-format.test.ts).
+   */
+  MAX_DECOMPRESSED_BYTES: 8 * 1024 * 1024, // 8 MiB
 } as const;

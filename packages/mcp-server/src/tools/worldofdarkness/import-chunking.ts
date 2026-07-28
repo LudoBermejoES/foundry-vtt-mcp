@@ -5,52 +5,76 @@
  * ----------------------------------
  * A six-actor import (~305 KB of JSON) failed with
  * `Query timeout: foundry-mcp-bridge.importActors`, while the same six actors
- * imported one at a time (~47 KB each) succeeded every time. There are two
- * independent ceilings behind that, and only a byte budget respects both:
+ * imported one at a time (~47 KB each) succeeded every time. Two independent
+ * ceilings were behind that. ONE OF THEM IS GONE, and the surviving one is the
+ * only reason this file still exists:
  *
- * 1. WALL CLOCK. `DataAccess.importActors` is a sequential loop; per actor it
- *    awaits `Actor.create(doc)`, which creates every embedded item and the
- *    prototype token. Cost is linear in the actor's item count, so a fixed
- *    query deadline is a limit on total serialized work — which correlates far
- *    better with bytes than with a document count. (An actor with 5 items and
- *    one with 150 are both "1".)
+ * 1. WALL CLOCK — still real, and now the sole justification. `DataAccess.importActors`
+ *    is a sequential loop; per actor it awaits `Actor.create(doc)`, which creates
+ *    every embedded item and the prototype token (data-access.ts:1276-1466). Cost
+ *    is linear in the actor's item count, so a fixed query deadline is a limit on
+ *    total serialized WORK — which correlates far better with bytes than with a
+ *    document count. (An actor with 5 items and one with 150 are both "1".) A
+ *    6-actor query is 6x the Foundry work whether or not it fits in one frame.
  *
- * 2. TRANSPORT MESSAGE SIZE. `foundry.connectionType` defaults to `'auto'`, so a
- *    deployment may resolve to WebSocket *or* WebRTC, and the two have wildly
- *    different limits:
- *      - WebSocket: `foundry-connector.ts` sets no `maxPayload`, so `ws`
- *        defaults to 100 MiB. 305 KB is a non-issue.
- *      - WebRTC: SCTP caps a data-channel message at
- *        `WEBRTC_CONSTANTS.MAX_MESSAGE_SIZE` (64 KiB), and the documented safe
- *        threshold is `CHUNK_SIZE` (50 KiB). ~47 KB per actor is uncomfortably
- *        close to both.
+ * 2. TRANSPORT MESSAGE SIZE — no longer a reason to chunk, and no longer a reason
+ *    to refuse. Compressed JSON is now the bridge wire format (wire-format.ts):
+ *    every `mcp-query` travels gzipped inside a `compressed-message` envelope once
+ *    the module has advertised `transport.compression.gzip`. Real WoD actor
+ *    documents compress 6.9x-12x, so a ~97 KB actor lands at ~16 KB of the
+ *    65,536-byte frame — 24%, with 4x headroom — and even the six-actor batch that
+ *    started this (277,676 B) fits in ONE message at 34,904 B.
  *
- *    Worse, and worth stating explicitly because it is not documented anywhere
- *    else: the server→Foundry direction does NOT chunk. `WebRTCPeer.sendMessage`
- *    (webrtc-peer.ts:180) is a bare `dataChannel.send(JSON.stringify(message))`
- *    inside a try/catch that only *logs* on failure. Only the Foundry→server
- *    direction chunks (foundry-module/src/webrtc-connection.ts:206-218). So on a
- *    WebRTC deployment an oversized `mcp-query` is dropped with nothing but a
- *    warn line, and the caller sees exactly the `Query timeout` observed above.
+ *    HISTORY, kept because it explains a refusal that used to live in
+ *    import-actor.ts: fragmentation in this repo is one-directional. The module
+ *    splits and the server reassembles; the server->Foundry direction did neither,
+ *    so on WebRTC an oversized `mcp-query` was dropped with one warn line and the
+ *    caller observed exactly the `Query timeout` above. The tool therefore refused
+ *    any single document over `MAX_MESSAGE_SIZE` before writing — a stand-in for a
+ *    missing mechanism, not an oversight. Compression supplies the mechanism, and
+ *    an undeliverable send now rejects its query immediately
+ *    (foundry-connector.ts), so the refusal is gone. Fragmenting the
+ *    server->Foundry direction remains the designed backstop and is deliberately
+ *    deferred; see wire-format.ts for the ordering and the trigger.
  *
- * Building the byte budget therefore makes the fix correct under *either*
- * transport, without first having to determine which one production resolves to.
+ * WHAT STILL BINDS
+ * ----------------
+ *   - one frame, measured AFTER compression: `WEBRTC_CONSTANTS.MAX_MESSAGE_SIZE`
+ *     (65,536 B). Enforced by the import tool on a measured size only, never
+ *     predicted from a ratio — an actor carrying an embedded 118 KB image
+ *     compresses 1.5x, not 9x.
+ *   - one staged document file: `wod.importMaxBytes` (2 MiB default).
+ *   - this file's per-query WORK budget, in uncompressed bytes.
  */
 
 import { WEBRTC_CONSTANTS } from '../../config.js';
 
 /**
- * Default per-query serialized budget: the documented WebRTC-safe threshold.
- * Below `MAX_MESSAGE_SIZE` (64 KiB) with headroom for the `mcp-query` envelope,
- * JSON escaping and chunk metadata. Also small enough that one query is roughly
- * "one actor's worth of Foundry work", which is the empirically good path.
+ * Default per-query serialized budget, in UNCOMPRESSED bytes: ~one actor's worth
+ * of Foundry work, which is the empirically good path. The value happens to equal
+ * the transport's old fragment threshold; that is now a coincidence of history, not
+ * a transport constraint — nothing about this number is about message size any
+ * more.
  */
 export const DEFAULT_CHUNK_BUDGET_BYTES = WEBRTC_CONSTANTS.CHUNK_SIZE;
 
 /**
- * Hard per-message ceiling. Only enforceable-as-a-rejection on the WebRTC
- * transport; on WebSocket the real limit is `ws`'s 100 MiB default and rejecting
- * here would break callers who import one large actor successfully today.
+ * Upper bound accepted for `chunkBytes`, in uncompressed bytes.
+ *
+ * NOT the frame size — that would be re-asserting the size ceiling this change
+ * removed. The bound is wall-clock: `chunkTimeoutMs` scales a query's deadline by
+ * `ceil(bytes / budget)` and caps it at 600 s, so above ~1 MiB of work in one query
+ * a caller is asking for more Foundry work than the maximum deadline can cover.
+ * At the measured ~47 KB per WoD actor, 1 MiB is ~22 actors created inside one
+ * query — already far beyond anything tested.
+ */
+export const MAX_CHUNK_BUDGET_BYTES = 1024 * 1024;
+
+/**
+ * One transport frame, in bytes. Retained under its old name because it is still
+ * the bound the tool checks — but it is now checked against the MEASURED COMPRESSED
+ * size of the message that would actually be sent, not against a document's
+ * uncompressed size, and it is no longer `chunkBytes`' maximum.
  */
 export const TRANSPORT_MAX_MESSAGE_BYTES = WEBRTC_CONSTANTS.MAX_MESSAGE_SIZE;
 
@@ -65,9 +89,12 @@ export interface DocChunk<T> {
   bytes: number;
   /**
    * True when this chunk holds a single document that is itself over budget.
-   * A document is indivisible — we cannot split one actor across two queries —
-   * so it is sent alone and the over-budget condition is surfaced rather than
-   * hidden.
+   *
+   * A document is indivisible — we cannot split one actor across two queries — so
+   * it is sent alone. This flag NO LONGER MEANS "refuse": it means only "this query
+   * gets a deadline scaled to its size" (`chunkTimeoutMs`). It used to be the
+   * trigger for a pre-write refusal on WebRTC, back when an oversized `mcp-query`
+   * was silently dropped by the transport.
    */
   oversized: boolean;
 }

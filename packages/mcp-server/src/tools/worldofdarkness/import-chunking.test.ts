@@ -80,8 +80,19 @@ describe('chunkDocsByBytes', () => {
     const chunks = chunkDocsByBytes([docOfBytes('huge', 80 * 1024)]);
     expect(chunks).toHaveLength(1);
     expect(chunks[0].docs).toHaveLength(1);
+    // `oversized` no longer means "refuse". Since
+    // lift-bridge-per-document-size-ceiling it means only "give this query a
+    // deadline scaled to its size" — the document travels, compressed, in one
+    // query, even though it is larger than a transport frame uncompressed.
     expect(chunks[0].oversized).toBe(true);
     expect(chunks[0].bytes).toBeGreaterThan(TRANSPORT_MAX_MESSAGE_BYTES);
+  });
+
+  it('gives an over-frame chunk a scaled deadline instead of refusing it', () => {
+    // The Salvador case: ~97 KB in one indivisible document, budget 51,200 B.
+    const chunk = chunkDocsByBytes([docOfBytes('salvador', 97 * 1024)])[0];
+    expect(chunk.bytes).toBeGreaterThan(TRANSPORT_MAX_MESSAGE_BYTES);
+    expect(chunkTimeoutMs(chunk, 10_000)).toBe(20_000);
   });
 
   it('honours the secondary per-chunk document cap', () => {

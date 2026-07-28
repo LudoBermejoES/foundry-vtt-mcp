@@ -1,4 +1,58 @@
-import { MODULE_ID, CONNECTION_STATES } from './constants.js';
+import { MODULE_ID, CONNECTION_STATES, WEBRTC_CONSTANTS } from './constants.js';
+import {
+  decodeFailureResponse,
+  decompressEnvelope,
+  isCompressedEnvelope,
+  WireDecodeError,
+  type WireMeta,
+} from './wire-format.js';
+
+/** UTF-8 byte length of one code point. */
+function utf8LengthOfCodePoint(codePoint: number): number {
+  if (codePoint < 0x80) return 1;
+  if (codePoint < 0x800) return 2;
+  if (codePoint < 0x10000) return 3;
+  return 4;
+}
+
+/** UTF-8 byte length of a string, i.e. what the transport actually counts. */
+export function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/**
+ * Split `text` into pieces of at most `maxBytes` UTF-8 bytes, cutting only on
+ * code-point boundaries so each piece is a well-formed string and
+ * `pieces.join('')` reproduces the input exactly.
+ *
+ * Exported for the test that pins the defect this replaces: a string whose
+ * UTF-16 length is under the fragment threshold while its UTF-8 encoding is over
+ * the frame.
+ */
+export function splitByUtf8Bytes(text: string, maxBytes: number): string[] {
+  const limit = Math.max(4, maxBytes);
+  const parts: string[] = [];
+  let start = 0;
+  let bytes = 0;
+
+  for (let i = 0; i < text.length; ) {
+    const codePoint = text.codePointAt(i) as number;
+    const units = codePoint > 0xffff ? 2 : 1;
+    const width = utf8LengthOfCodePoint(codePoint);
+
+    if (bytes + width > limit && i > start) {
+      parts.push(text.slice(start, i));
+      start = i;
+      bytes = 0;
+    }
+
+    bytes += width;
+    i += units;
+  }
+
+  if (start < text.length) parts.push(text.slice(start));
+  return parts;
+}
 
 export interface WebRTCConfig {
   serverHost: string;
@@ -18,11 +72,11 @@ export class WebRTCConnection {
   private peerConnection: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
   private connectionState: string = CONNECTION_STATES.DISCONNECTED;
-  private messageHandler: ((message: any) => Promise<void>) | null = null;
+  private messageHandler: ((message: any, meta: WireMeta) => Promise<void>) | null = null;
 
   constructor(private config: WebRTCConfig) {}
 
-  async connect(onMessage: (message: any) => Promise<void>): Promise<void> {
+  async connect(onMessage: (message: any, meta: WireMeta) => Promise<void>): Promise<void> {
     if (
       this.connectionState === CONNECTION_STATES.CONNECTED ||
       this.connectionState === CONNECTION_STATES.CONNECTING
@@ -86,14 +140,57 @@ export class WebRTCConnection {
 
     this.dataChannel.onmessage = async event => {
       try {
+        // Routed by `message.type` ONLY — never by sniffing the payload bytes and
+        // never by testing `typeof event.data`. The wire stays textual precisely
+        // so this stays a single discrimination axis.
         const message = JSON.parse(event.data);
-        if (this.messageHandler) {
-          await this.messageHandler(message);
-        }
+        await this.dispatch(message);
       } catch (error) {
         this.log(`Failed to parse WebRTC message: ${error}`);
       }
     };
+  }
+
+  /**
+   * Unwrap a `compressed-message` envelope if that is what arrived, then hand the
+   * message to the application with a note of how it arrived — so the reply can
+   * be encoded in kind (see socket-bridge's `handleMessage`).
+   *
+   * A decode failure ANSWERS the originating request rather than being dropped:
+   * dropping it costs the caller its full query deadline and points at the wrong
+   * subsystem.
+   */
+  private async dispatch(message: any): Promise<void> {
+    if (!isCompressedEnvelope(message)) {
+      if (this.messageHandler) await this.messageHandler(message, { compressed: false });
+      return;
+    }
+
+    let inner: any;
+    try {
+      inner = await decompressEnvelope(message, WEBRTC_CONSTANTS.MAX_DECOMPRESSED_BYTES);
+    } catch (error) {
+      const decodeError =
+        error instanceof WireDecodeError
+          ? error
+          : new WireDecodeError(
+              error instanceof Error ? error.message : String(error),
+              message.originalId,
+              message.originalType
+            );
+      this.log(`Failed to decode compressed message: ${decodeError.message}`);
+      try {
+        this.sendMessage(decodeFailureResponse(decodeError));
+      } catch (sendError) {
+        this.log(`Could not report the decode failure: ${sendError}`);
+      }
+      return;
+    }
+
+    this.log(
+      `Decoded compressed message: ${message.originalType} (${message.payload.length} b64 chars)`
+    );
+    if (this.messageHandler) await this.messageHandler(inner, { compressed: true });
   }
 
   private setupPeerConnectionHandlers(): void {
@@ -200,15 +297,25 @@ export class WebRTCConnection {
 
     try {
       const json = JSON.stringify(message);
-      const size = json.length;
+      // BYTES, not UTF-16 code units. SCTP's limit is a byte limit; `json.length`
+      // counts code units, so every non-ASCII character (this corpus is Spanish,
+      // and one accented character is 2 bytes, an emoji 4) made the old
+      // measurement under-count — a check that could not detect what it existed
+      // to detect. Compression dissolves this on the compressed path, because
+      // gzip consumes an encoded byte buffer and there is no `.length` left to
+      // get wrong; it does NOT dissolve here, because this framing layer still
+      // splits a text envelope.
+      const size = utf8Length(json);
 
-      // WebRTC SCTP constants (keep in sync with server config.ts WEBRTC_CONSTANTS)
-      const MAX_MESSAGE_SIZE = 65536; // 64KB - SCTP hard limit
-      const CHUNK_SIZE = 50 * 1024; // 50KB - safe threshold for chunking
+      const { MAX_MESSAGE_SIZE, CHUNK_SIZE } = WEBRTC_CONSTANTS;
 
       if (size > CHUNK_SIZE) {
-        // Split large message into chunks
-        const totalChunks = Math.ceil(json.length / CHUNK_SIZE);
+        // Split large message into chunks. The cut points are byte-budgeted but
+        // land on CODE-POINT boundaries: each fragment travels as a string and the
+        // far side reassembles by string concatenation, so slicing mid-sequence
+        // would corrupt the character that straddles the cut.
+        const parts = splitByUtf8Bytes(json, CHUNK_SIZE);
+        const totalChunks = parts.length;
         const chunkId = `chunk-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         this.log(
@@ -216,9 +323,7 @@ export class WebRTCConnection {
         );
 
         for (let i = 0; i < totalChunks; i++) {
-          const start = i * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, json.length);
-          const chunk = json.substring(start, end);
+          const chunk = parts[i];
 
           const chunkMessage = {
             type: 'chunked-message',
@@ -231,18 +336,19 @@ export class WebRTCConnection {
           };
 
           const chunkJson = JSON.stringify(chunkMessage);
+          const chunkBytes = utf8Length(chunkJson);
 
           // Verify chunk doesn't exceed SCTP maxMessageSize (safety check)
-          if (chunkJson.length > MAX_MESSAGE_SIZE) {
+          if (chunkBytes > MAX_MESSAGE_SIZE) {
             throw new Error(
-              `Chunk ${i + 1}/${totalChunks} size ${chunkJson.length} exceeds ` +
+              `Chunk ${i + 1}/${totalChunks} size ${chunkBytes} bytes exceeds ` +
                 `SCTP maxMessageSize of ${MAX_MESSAGE_SIZE} bytes. ` +
                 `Original message may be too large to chunk safely.`
             );
           }
 
           this.dataChannel.send(chunkJson);
-          this.log(`Sent chunk ${i + 1}/${totalChunks} (${chunkJson.length} bytes)`);
+          this.log(`Sent chunk ${i + 1}/${totalChunks} (${chunkBytes} bytes)`);
         }
 
         this.log(`Successfully sent all ${totalChunks} chunks for ${message.type}`);

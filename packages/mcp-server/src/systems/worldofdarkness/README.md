@@ -46,7 +46,7 @@ are all embedded `items[]`:
 | `worldofdarkness-add-items`      | Embed compendium Items onto an actor (all-or-nothing)                                                       | `addActorItems`                    |
 | `worldofdarkness-create-actor`   | Create a splat actor with the right `system.settings` flags                                                 | `createActors`                     |
 | `worldofdarkness-get-sheet`      | Full structured splat sheet + art paths, and `flags` / `prototypeToken` / item ids on `include` (read-only) | `getCharacterInfo` (`include`)     |
-| `worldofdarkness-import-actor`   | Create/update actors from full exported Actor JSON (chunked, per-actor results, `dryRun`)                   | `importActors`                     |
+| `worldofdarkness-import-actor`   | Create/update actors from full exported Actor JSON (chunked, per-actor results, `dryRun` + transport plan)  | `importActors`                     |
 | `worldofdarkness-find-actors`    | Map external source ids (`flags.wodchar.sourceId`) to Foundry actor ids; reports unmatched + duplicates     | `findActorsByFlag` (new)           |
 
 `roll-pool` and `find-actors` are the only tools that required a new browser-side handler (`rollDice`
@@ -59,6 +59,16 @@ the capability list `handlePing` advertises and refused if unsupported, never an
 `import-actor`'s `dryRun` (`importActors.dryRun`), `get-sheet`'s `include`
 (`getCharacterInfo.include`), and `find-actors` itself (`findActorsByFlag`). Module 0.9.3+ for the
 last two.
+
+**No per-document size ceiling.** `import-actor` used to refuse any single document over 65,536 bytes on
+the WebRTC transport, which made a ~97 KB Mage export unimportable — and unpredictable, because the
+refusal pre-empted `dryRun` too. Compressed JSON is now the bridge wire format (module 0.9.5+ advertises
+`transport.compression.gzip`), real WoD actor documents compress 6.9x–12.5x, and the refusal is gone.
+What remains is a refusal on the **measured compressed** size of the message that would actually be
+sent — which in practice only fires for art embedded as a base64 `data:` URI, whose remedy is to sync the
+image to the Foundry server and repoint `img`. `chunkBytes` is a per-query **work** budget in
+uncompressed bytes, not a size ceiling. See
+[`docs/transport-wire-format.md`](../../../../../docs/transport-wire-format.md).
 
 ## Registration
 

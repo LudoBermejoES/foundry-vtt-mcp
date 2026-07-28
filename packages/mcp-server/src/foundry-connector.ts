@@ -1,8 +1,18 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import { Logger } from './logger.js';
-import { Config } from './config.js';
+import { Config, WEBRTC_CONSTANTS } from './config.js';
 import { WebRTCPeer } from './webrtc-peer.js';
+import {
+  COMPRESSION_CAPABILITY,
+  compressMessage,
+  decompressEnvelope,
+  isCompressedEnvelope,
+  mustSendPlain,
+  PING_QUERY_METHOD,
+  wireBytesOf,
+  WireDecodeError,
+} from './wire-format.js';
 
 export interface FoundryConnectorOptions {
   config: Config['foundry'];
@@ -27,6 +37,18 @@ export class FoundryConnector {
   private activeConnectionType: 'websocket' | 'webrtc' | null = null;
   private pendingQueries = new Map<string, PendingQuery>();
   private queryIdCounter = 0;
+  /**
+   * Capabilities advertised by the module on the CURRENT connection, or `null`
+   * when the handshake has not completed (or has been invalidated).
+   *
+   * PER CONNECTION, AND DISCARDED ON DISCONNECT. The peer behind a reconnect may
+   * be a different module version — after a world reload it usually is — so a
+   * cached "yes" that survived a reconnect would have the server compressing into
+   * a module that cannot decompress, which with compression as the FORMAT breaks
+   * every message rather than only large ones.
+   */
+  private peerCapabilities: string[] | null = null;
+  private negotiationTimer: NodeJS.Timeout | null = null;
 
   constructor({ config, logger }: FoundryConnectorOptions) {
     this.config = config;
@@ -123,6 +145,7 @@ export class FoundryConnector {
         this.foundrySocket = ws;
         this.activeConnectionType = 'websocket';
         this.logger.info('Foundry module registered via WebSocket');
+        this.scheduleCapabilityHandshake();
       }
 
       ws.on('close', () => {
@@ -130,6 +153,7 @@ export class FoundryConnector {
         if (this.activeConnectionType === 'websocket' && this.foundrySocket === ws) {
           this.foundrySocket = null;
           this.activeConnectionType = null;
+          this.invalidatePeerCapabilities('websocket disconnect');
           // Reject all pending queries
           this.pendingQueries.forEach(({ reject, timeout }) => {
             clearTimeout(timeout);
@@ -146,6 +170,10 @@ export class FoundryConnector {
           // Check if this is WebRTC signaling
           if (message.type === 'webrtc-offer') {
             await this.handleWebRTCOffer(message.offer, ws);
+          } else if (isCompressedEnvelope(message)) {
+            // A receiver accepts BOTH encodings at all times, on every transport,
+            // regardless of what it sends: it does not control its peer's version.
+            await this.handleCompressedMessage(message);
           } else {
             // Regular WebSocket message - process it directly
             await this.handleMessage(message);
@@ -181,6 +209,8 @@ export class FoundryConnector {
     }
 
     this.logger.info('Stopping Foundry connector...');
+
+    this.invalidatePeerCapabilities('connector stopping');
 
     // Reject all pending queries
     this.pendingQueries.forEach(({ reject, timeout }) => {
@@ -261,15 +291,142 @@ export class FoundryConnector {
     this.logger.debug('Received unknown message type', { type: message.type });
   }
 
+  /**
+   * Unwrap a `compressed-message` and route it, or answer the request it belonged
+   * to. Dropping a decode failure costs the caller its whole deadline and is then
+   * reported as a timeout, which points at the wrong subsystem.
+   */
+  private async handleCompressedMessage(envelope: any): Promise<void> {
+    try {
+      const inner = decompressEnvelope(envelope, WEBRTC_CONSTANTS.MAX_DECOMPRESSED_BYTES);
+      await this.handleMessage(inner);
+    } catch (error) {
+      const decodeError =
+        error instanceof WireDecodeError
+          ? error
+          : new WireDecodeError(
+              error instanceof Error ? error.message : String(error),
+              envelope?.originalId,
+              envelope?.originalType
+            );
+      this.logger.error('Failed to decode compressed message', { error: decodeError.message });
+      if (decodeError.originalId) {
+        await this.handleMessage({
+          type: 'mcp-response',
+          id: decodeError.originalId,
+          data: { success: false, error: decodeError.message },
+        });
+      }
+    }
+  }
+
+  // ── Capability negotiation ────────────────────────────────────────────────
+  //
+  // NOTHING PINGED ON CONNECT BEFORE THIS CHANGE. `FoundryClient.ping()` existed
+  // with no caller at connection establishment, and the import tool's dry-run gate
+  // pinged ad hoc per call. Compression as the wire FORMAT needs the answer before
+  // the first real query, so the handshake now runs once per connection.
+  //
+  // Failure is not an error condition: an unanswered or refused ping simply leaves
+  // `peerCapabilities` null, and the server sends plain JSON — today's behaviour,
+  // which is the permanent path for an older module or a runtime without the
+  // primitive, not a transitional one.
+
+  /**
+   * Run the handshake shortly after the connection is usable.
+   *
+   * The small delay is deliberate: on the WebSocket path the module attaches its
+   * `onmessage` handler inside its own `onopen`, so a ping sent in the same tick as
+   * the server's `connection` event can be dispatched before anything is listening
+   * and simply vanish. Worst case we stay plain.
+   */
+  private scheduleCapabilityHandshake(delayMs = 250): void {
+    if (this.negotiationTimer) clearTimeout(this.negotiationTimer);
+    this.negotiationTimer = setTimeout(() => {
+      this.negotiationTimer = null;
+      void this.negotiateCapabilities();
+    }, delayMs);
+    // Do not hold the process open for a handshake.
+    this.negotiationTimer.unref?.();
+  }
+
+  private async negotiateCapabilities(): Promise<void> {
+    if (!this.isConnected()) return;
+    try {
+      // Sent PLAIN — `mustSendPlain` forces it, because this exchange is how the
+      // encoding is discovered and so cannot ride inside it.
+      const pong = await this.query(PING_QUERY_METHOD, undefined, 10000);
+      const caps: unknown = pong?.capabilities;
+      this.peerCapabilities = Array.isArray(caps) ? caps.filter(c => typeof c === 'string') : [];
+      this.logger.info('Negotiated bridge capabilities', {
+        connectionType: this.activeConnectionType,
+        moduleVersion: pong?.moduleVersion ?? null,
+        compression: this.isCompressionNegotiated(),
+        capabilities: this.peerCapabilities.length,
+      });
+    } catch (error) {
+      // Stay plain. Not a failure mode — just no capability observed.
+      this.logger.warn('Bridge capability handshake did not complete; staying on plain JSON', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private invalidatePeerCapabilities(reason: string): void {
+    if (this.negotiationTimer) {
+      clearTimeout(this.negotiationTimer);
+      this.negotiationTimer = null;
+    }
+    if (this.peerCapabilities !== null) {
+      this.logger.info('Discarding negotiated bridge capabilities', { reason });
+    }
+    this.peerCapabilities = null;
+  }
+
+  /** Capabilities observed on the current connection, or `null` if none yet. */
+  getPeerCapabilities(): readonly string[] | null {
+    return this.peerCapabilities;
+  }
+
+  /** True only once the peer has advertised compression on THIS connection. */
+  isCompressionNegotiated(): boolean {
+    return this.peerCapabilities !== null && this.peerCapabilities.includes(COMPRESSION_CAPABILITY);
+  }
+
+  /**
+   * Serialized size, in bytes, of the message this connector would actually put on
+   * the wire for `method`/`data` — compressed when compression has been negotiated
+   * on this connection, plain otherwise.
+   *
+   * The single sanctioned way to answer "will this fit in a frame". It MEASURES;
+   * callers must never predict a compressed size from an assumed ratio, because
+   * the ratio is a property of the content: ordinary WoD actor documents compress
+   * 6.9x-12x, one carrying an embedded 118 KB image compresses 1.5x.
+   */
+  measureQueryWireBytes(method: string, data?: any): number {
+    const message = {
+      type: 'mcp-query',
+      id: `query-${this.queryIdCounter + 1}`,
+      data: { method, data },
+    };
+    return wireBytesOf(message, this.isCompressionNegotiated());
+  }
+
   private async handleWebRTCOffer(offer: any, signalingWs: WebSocket): Promise<void> {
     try {
       this.logger.info('Handling WebRTC offer for signaling');
+
+      // A new peer means a possibly different module build: start from "no
+      // capability observed" and re-negotiate once its data channel opens.
+      this.invalidatePeerCapabilities('new WebRTC peer');
 
       // Create WebRTC peer
       this.webrtcPeer = new WebRTCPeer({
         config: this.config.webrtc,
         logger: this.logger,
         onMessage: this.handleMessage.bind(this),
+        onOpen: () => this.scheduleCapabilityHandshake(),
+        onClose: () => this.invalidatePeerCapabilities('WebRTC data channel closed'),
       });
 
       // Handle offer and get answer
@@ -329,11 +486,17 @@ export class FoundryConnector {
         return;
       }
 
+      // A new peer means a possibly different module build: start from "no
+      // capability observed" and re-negotiate once its data channel opens.
+      this.invalidatePeerCapabilities('new WebRTC peer');
+
       // Create WebRTC peer
       this.webrtcPeer = new WebRTCPeer({
         config: this.config.webrtc,
         logger: this.logger,
         onMessage: this.handleMessage.bind(this),
+        onOpen: () => this.scheduleCapabilityHandshake(),
+        onClose: () => this.invalidatePeerCapabilities('WebRTC data channel closed'),
       });
 
       // Handle offer and get answer
@@ -408,22 +571,75 @@ export class FoundryConnector {
         data: { method, data },
       };
 
-      // Use sendToFoundry to support both WebSocket and WebRTC
-      this.sendToFoundry(message);
+      // Use sendToFoundry to support both WebSocket and WebRTC.
+      //
+      // A SEND THAT FAILS REJECTS THIS QUERY AT ONCE. It used to be swallowed by a
+      // `logger.error` inside the WebRTC sender, so an undeliverable message
+      // surfaced a full deadline later as `Query timeout: <method>` — pointing at
+      // the wrong subsystem for a message that never left the process. Now that no
+      // application-level size check precedes the send, this is the ONLY mechanism
+      // that distinguishes "could not send" from "sent and never answered".
+      try {
+        this.sendToFoundry(message);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pendingQueries.delete(queryId);
+        const reason = error instanceof Error ? error.message : String(error);
+        reject(
+          new Error(
+            `Send failed on the ${this.activeConnectionType ?? 'unknown'} transport for ${method} ` +
+              `(${this.wireBytesOfMessage(message)} bytes on the wire): ${reason}`
+          )
+        );
+      }
     });
   }
 
+  /**
+   * The ONE outbound encoder. Every server->Foundry send funnels through here —
+   * `query` (above), `sendMessage`, and `FoundryClient.sendMessage` — so there is
+   * exactly one place that decides a message's encoding, on either transport.
+   *
+   * Compression is applied only when the peer has advertised it on the CURRENT
+   * connection and the message is not in the forced-plain set (`mustSendPlain`).
+   * Until then, plain JSON: identical to the behaviour before this change, and the
+   * permanent path for an un-upgraded module.
+   */
   sendToFoundry(message: any): void {
+    const payload = this.encodeOutbound(message);
+
     if (this.activeConnectionType === 'webrtc' && this.webrtcPeer) {
-      this.webrtcPeer.sendMessage(message);
+      this.webrtcPeer.sendMessage(payload);
     } else if (
       this.activeConnectionType === 'websocket' &&
       this.foundrySocket &&
       this.foundrySocket.readyState === WebSocket.OPEN
     ) {
-      this.foundrySocket.send(JSON.stringify(message));
+      this.foundrySocket.send(JSON.stringify(payload));
     } else {
       throw new Error('Not connected to Foundry VTT module');
+    }
+  }
+
+  private encodeOutbound(message: any): any {
+    if (!this.isCompressionNegotiated() || mustSendPlain(message)) return message;
+    try {
+      return compressMessage(message);
+    } catch (error) {
+      // Never let an encoder fault take out a send that would have worked plain.
+      this.logger.error('Compression failed; falling back to plain JSON for this message', {
+        type: message?.type,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return message;
+    }
+  }
+
+  private wireBytesOfMessage(message: any): number {
+    try {
+      return wireBytesOf(message, this.isCompressionNegotiated());
+    } catch {
+      return -1;
     }
   }
 
