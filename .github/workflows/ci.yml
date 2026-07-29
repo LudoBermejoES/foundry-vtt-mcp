@@ -1,0 +1,132 @@
+name: CI
+
+# Runs the checks this repository already had and nothing ever invoked.
+#
+# Before this file, both workflows here were build-only — release artifacts on
+# tags and on PRs to master — and the only git hook was `prettier --write` via
+# lint-staged. So `npm test` (a Vitest suite of 872 cases across 30 files, of
+# which 863 run in a standalone checkout — see the corpus note below),
+# `npm run typecheck` (the repo's own "type-checking is the gate"),
+# `npm run audit:circular`, `npm run test:refactor-tools` and
+# `npm run test:mcp:schema` were invoked by nothing at all. They were all green;
+# they were just never run. This job runs them.
+#
+# WHAT IS AND IS NOT COVERED. The "Report what this gate covered" step measures
+# it from the tree on every run rather than asserting it here, because a stale
+# coverage claim in a comment is exactly the failure mode this gate exists to
+# close. In summary:
+#
+#   packages/foundry-module  Vitest suite — covered
+#   packages/mcp-server      Vitest suite — covered
+#   shared                   no test script and no test files — type gate only
+#
+# Two mcp-server files self-skip here, by design and loudly:
+# `src/wire-format.corpus.test.ts` and
+# `src/tools/worldofdarkness/import-archive.corpus.test.ts`. Their corpus is real
+# players' exported characters, living in the sibling private `wod20-char`
+# submodule of the mago20 monorepo; a standalone checkout of this repository does
+# not have it and the fixtures cannot be vendored here. Those measurements are
+# kept honest inside the monorepo. The behavioural guarantees they complement
+# (round-trip, the bomb bound, the measured frame guard) are in
+# `wire-format.test.ts` / `import-archive.test.ts` and always run.
+#
+# `npm run lint` is deliberately NOT wired: it currently reports 207 errors and
+# 12,071 warnings. Wiring it would mean either a red gate or relaxing rules, and
+# a green pipeline bought by weakening a check is worse than no pipeline. It
+# needs its own cleanup change.
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request: {}
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '20.12.2'
+        cache: 'npm'
+
+    - name: Install workspace dependencies (CI)
+      run: npm ci --workspaces --include-workspace-root
+
+    # `shared` is consumed as `@foundry-mcp/shared` -> `shared/dist`, which is
+    # gitignored. Without this step a fresh checkout cannot resolve it, and BOTH
+    # the type gate (`packages/mcp-server/src/tools/campaign-management.ts`) and
+    # `packages/mcp-server/src/wire-format.test.ts` fail for that reason alone.
+    # The release workflows build it first for the same reason.
+    - name: Build shared types
+      run: npm run build --workspace=shared
+
+    - name: Type-check all workspaces
+      run: npm run typecheck
+
+    - name: Test
+      run: npm test
+
+    - name: Circular dependency check
+      run: npm run audit:circular
+
+    - name: Refactor-tool selfcheck
+      run: npm run test:refactor-tools
+
+    # The schema smoke test imports the compiled tool definitions from
+    # `packages/mcp-server/dist`, so the server has to be built first.
+    - name: Build MCP server
+      run: npm run build --workspace=packages/mcp-server
+
+    - name: MCP tool-schema smoke test
+      run: npm run test:mcp:schema
+
+    - name: Report what this gate covered
+      if: always()
+      run: |
+        {
+          echo '### What this gate covered'
+          echo
+          echo '| workspace | test files | `test` script | status |'
+          echo '|---|---:|---|---|'
+          for ws in packages/foundry-module packages/mcp-server shared; do
+            files=$(find "$ws/src" -name '*.test.ts' -not -path '*/node_modules/*' 2>/dev/null | wc -l | tr -d ' ')
+            script=$(node -p "require('./$ws/package.json').scripts.test || ''")
+            if [ -n "$script" ]; then
+              echo "| \`$ws\` | $files | \`$script\` | suite run |"
+            else
+              echo "| \`$ws\` | $files | — | **type-check only, no suite** |"
+            fi
+          done
+          echo
+          echo '### Files that self-skip in a standalone checkout'
+          echo
+          corpus=$(find packages -name '*.corpus.test.ts' -not -path '*/node_modules/*' | sort)
+          if [ -z "$corpus" ]; then
+            echo 'None.'
+          else
+            if [ -d ../wod20-char ]; then
+              echo 'The sibling `wod20-char` corpus IS present, so these ran in full:'
+            else
+              echo 'The sibling `wod20-char` corpus is NOT present here (real player data,'
+              echo 'private submodule of the mago20 monorepo), so these SKIPPED and their'
+              echo 'measurements are not enforced by this run:'
+            fi
+            echo
+            for f in $corpus; do echo "- \`$f\`"; done
+          fi
+          echo
+          echo '### Not covered by this gate'
+          echo
+          echo '- `npm run lint` — currently 207 errors / 12071 warnings; needs its own cleanup change.'
+          echo '- `npm run audit:unused` (knip) and `npm run audit:deps` — advisory, not measured as clean.'
+          echo '- Runtime behaviour inside a live Foundry world. The suites drive the real module code'
+          echo '  against a fake world (`src/__fixtures__/fake-foundry.ts`), not against Foundry itself.'
+        } >> "$GITHUB_STEP_SUMMARY"
