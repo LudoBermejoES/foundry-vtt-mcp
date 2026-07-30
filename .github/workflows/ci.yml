@@ -48,8 +48,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # Full history, not the action's default `fetch-depth: 1`. The
+    # "Refactor-tool selfcheck" step below validates the extractors against real
+    # git history: `scripts/refactor/selfcheck.mjs` resolves three fixture
+    # commits (3cbe106, f4b0fd2, 7bf9c77) with `git show <sha>:<path>`. On a
+    # shallow clone those objects are absent and the step dies with
+    # `fatal: invalid object name '3cbe106'` — which then SKIPS the two steps
+    # after it, so the MCP schema smoke test never runs at all.
+    #
+    # `0` rather than a finite depth on purpose: those fixtures recede one
+    # commit further into the past with every commit that lands, so any number
+    # large enough today is a time bomb that fails again later for a reason
+    # nobody will connect back to here.
     - name: Checkout code
       uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
