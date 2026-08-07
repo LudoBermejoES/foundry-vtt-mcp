@@ -414,6 +414,10 @@ export class FoundryDataAccess {
    * required sub-fields) is delegated to Foundry's DataModel layer, which
    * will fill defaults or throw a meaningful error.
    *
+   * `flags` is optional and forwarded verbatim onto the created document; see
+   * `actor-crud.ts::addActorItems` for why it must be carriable and why `_id`
+   * is not.
+   *
    * Delegates to actor-crud.ts. This delegation is PERMANENT: queries.ts reaches it.
    */
   async addActorItems(params: {
@@ -423,6 +427,7 @@ export class FoundryDataAccess {
       type: string;
       img?: string;
       system?: Record<string, any>;
+      flags?: Record<string, any>;
     }>;
   }): Promise<{
     actorId: string;

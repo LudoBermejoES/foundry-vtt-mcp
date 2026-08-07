@@ -191,6 +191,16 @@ export class CharacterTools {
                       "System-specific data (free-form). Passed through to Foundry's DataModel layer.",
                     additionalProperties: true,
                   },
+                  flags: {
+                    type: 'object',
+                    description:
+                      'Optional document flags, stored verbatim on the created item and keyed by ' +
+                      'scope (e.g. {"wod20-char": {"id": "...", "line": "mage", "sourceType": "practice"}}). ' +
+                      "Use for provenance: some systems resolve an item's displayed description from " +
+                      'these flags rather than from stored text, so an item created without them can ' +
+                      'render empty. Omit and the document is created exactly as before.',
+                    additionalProperties: true,
+                  },
                 },
                 required: ['name', 'type'],
               },
@@ -530,6 +540,12 @@ export class CharacterTools {
       type: z.string().min(1, 'Item type cannot be empty'),
       img: z.string().optional(),
       system: z.record(z.any()).optional(),
+      // Same field, same semantics as `manage-actors` action:"create-items" —
+      // these two surfaces send the identical payload to the identical bridge
+      // query, and `handleCreateWorldItems` above already accepts `flags`. A
+      // zod object STRIPS undeclared keys, so without this line flags passed
+      // to add-to-actor would be dropped silently between the two.
+      flags: z.record(z.any()).optional(),
     });
 
     const schema = z.object({

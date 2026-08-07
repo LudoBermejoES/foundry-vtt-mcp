@@ -62,7 +62,8 @@ export class ActorManagementTools {
           '- "update": Update one or more existing actors by ID. Merges into existing system data.\n' +
           '- "delete": Permanently delete one or more actors by ID.\n' +
           '- "create-items": Add NEW embedded items to an existing actor (name + type + arbitrary\n' +
-          '  system data). Same operation as manage-world-items action:"add-to-actor"; use either.\n' +
+          '  system data, plus optional "flags" stored verbatim for provenance). Same operation as\n' +
+          '  manage-world-items action:"add-to-actor"; use either.\n' +
           '  For World of Darkness you can instead use worldofdarkness-add-items to copy items by\n' +
           '  name out of the wod20-compendium-es packs.\n' +
           '- "update-items": Update embedded items on an actor by item ID.\n' +
@@ -196,6 +197,17 @@ export class ActorManagementTools {
                     additionalProperties: true,
                     description:
                       'System-specific data. Free-form — use action:"describe" for valid fields.',
+                  },
+                  flags: {
+                    type: 'object',
+                    additionalProperties: true,
+                    description:
+                      'Optional document flags, stored verbatim on the created item and keyed by ' +
+                      'scope (e.g. {"wod20-char": {"id": "...", "line": "mage", "sourceType": "practice"}}). ' +
+                      'Use this for provenance: in worldofdarkness, entity-backed items ship an empty ' +
+                      'system.description and the sheet resolves their text live from the compendium ' +
+                      'via these flags, so an item created without them renders with no description. ' +
+                      'Omit it and the document is created exactly as before.',
                   },
                 },
                 required: ['name', 'type'],
@@ -384,6 +396,13 @@ export class ActorManagementTools {
             type: z.string().min(1),
             img: z.string().optional(),
             system: z.record(z.any()).optional(),
+            // Provenance flags, forwarded verbatim to the bridge. `z.record`
+            // accepts only a plain object, so an array/string/null `flags`
+            // is rejected here rather than reaching Foundry. Absent stays
+            // absent: zod does not materialise an omitted optional key, so a
+            // caller that passes no flags sends the byte-identical payload
+            // it sent before this field existed.
+            flags: z.record(z.any()).optional(),
           })
         )
         .min(1),

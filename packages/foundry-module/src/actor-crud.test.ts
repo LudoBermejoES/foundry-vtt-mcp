@@ -634,6 +634,79 @@ describe('addActorItems', () => {
     expect(world.embeddedCreates[0].docs).toEqual([{ name: 'Odd', type: 'gear' }]);
   });
 
+  // ── `flags`: provenance the sheet resolves descriptions from ───────────────
+  //
+  // Entity-backed worldofdarkness items ship an EMPTY `system.description` and
+  // rely on `flags['wod20-char']` so the sheet can resolve their text live from
+  // the compendium. Before this field existed, an item created through the
+  // bridge kept none of it and rendered with no description at all. These three
+  // pin the whole contract: it arrives, its absence changes nothing, and a
+  // malformed value is refused rather than quietly dropped.
+
+  it('carries caller-supplied `flags` verbatim onto the created document', async () => {
+    const flags = {
+      'wod20-char': { id: 'mage/practice/hechiceria', line: 'mage', sourceType: 'practice' },
+    };
+
+    await da.addActorItems({
+      actorIdentifier: 'Lena',
+      items: [{ name: 'Hechicería', type: 'Feature', system: { description: '' }, flags }],
+    });
+
+    expect(world.embeddedCreates[0].docs).toEqual([
+      {
+        name: 'Hechicería',
+        type: 'Feature',
+        system: { description: '' },
+        flags: {
+          'wod20-char': { id: 'mage/practice/hechiceria', line: 'mage', sourceType: 'practice' },
+        },
+      },
+    ]);
+    // Verbatim: the nested object is the caller's, not a reshaped copy.
+    expect(world.embeddedCreates[0].docs[0].flags).toEqual(flags);
+  });
+
+  it('invents no `flags` key when the caller supplies none — byte-identical to before', async () => {
+    await da.addActorItems({
+      actorIdentifier: 'Lena',
+      items: [
+        { name: 'Rope', type: 'gear' },
+        { name: 'Sword', type: 'weapon', flags: undefined },
+      ],
+    });
+
+    // `toEqual` ignores an explicit `flags: undefined`, so assert on the KEYS:
+    // this is the assertion that fails if the field is ever materialised empty.
+    expect(world.embeddedCreates[0].docs.map(d => Object.keys(d).sort())).toEqual([
+      ['name', 'type'],
+      ['name', 'type'],
+    ]);
+    expect(world.embeddedCreates[0].docs.every(d => !('flags' in d))).toBe(true);
+  });
+
+  it.each([
+    ['an array', [{ 'wod20-char': {} }]],
+    ['null', null],
+    ['a string', '{"wod20-char":{}}'],
+    ['a number', 7],
+  ])('rejects a malformed `flags` (%s) before any write, and audits nothing', async (_l, flags) => {
+    await expect(
+      da.addActorItems({
+        actorIdentifier: 'Lena',
+        items: [
+          { name: 'Sword', type: 'weapon' },
+          { name: 'Hechicería', type: 'Feature', flags: flags as any },
+        ],
+      })
+    ).rejects.toThrow('items[1] ("Hechicería"): "flags" must be a plain object when provided');
+
+    // Thrown while BUILDING the payload, so the first (valid) item was not
+    // written either — the batch is all-or-nothing, like the type guard above.
+    expect(world.embeddedCreates).toEqual([]);
+    expect(world.audit).toEqual([]);
+  });
+
   it('audits success with the identifier, the resolved id and the payload size', async () => {
     const res = await da.addActorItems({
       actorIdentifier: 'Lena',

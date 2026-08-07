@@ -1663,7 +1663,11 @@ export class QueryHandlers {
       name: string;
       type: string;
       img?: string;
+      // Optional provenance/module flags, forwarded verbatim. `data.items` is
+      // handed on whole below, so nothing here reshapes or filters the entry —
+      // this declaration only stops the field being invisible to the type gate.
       system?: Record<string, any>;
+      flags?: Record<string, any>;
     }>;
   }): Promise<any> {
     try {

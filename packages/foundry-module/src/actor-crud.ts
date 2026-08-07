@@ -252,6 +252,22 @@ export class ActorCrud {
    * types when available. Everything else (system schema validation,
    * required sub-fields) is delegated to Foundry's DataModel layer, which
    * will fill defaults or throw a meaningful error.
+   *
+   * `flags` is forwarded VERBATIM onto the created document. It is not
+   * decoration: several systems resolve an item's rendered content from its
+   * provenance flags rather than from stored text — `worldofdarkness` items
+   * exported by wod20-char deliberately ship an EMPTY `system.description`
+   * and carry `flags['wod20-char']` so the sheet can resolve the description
+   * live from the compendium. Without a way to send `flags`, an item created
+   * through this bridge renders with no description at all, which is why the
+   * field exists here. Absent `flags` is absent on the document — no empty
+   * object is invented — so callers that never pass it are unaffected.
+   *
+   * `_id` is deliberately NOT accepted: honouring it would require passing
+   * `keepId: true` to `createEmbeddedDocuments`, a per-CALL option that
+   * applies to the whole batch, and a supplied id colliding with an item the
+   * actor already owns is an overwrite hazard whose handling differs across
+   * Foundry versions. Nothing needs it; letting Foundry mint the id is safe.
    */
   async addActorItems(params: {
     actorIdentifier: string;
@@ -260,6 +276,7 @@ export class ActorCrud {
       type: string;
       img?: string;
       system?: Record<string, any>;
+      flags?: Record<string, any>;
     }>;
   }): Promise<{
     actorId: string;
@@ -305,6 +322,18 @@ export class ActorCrud {
       const doc: Record<string, any> = { name: it.name, type: it.type };
       if (it.img) doc.img = it.img;
       if (it.system && typeof it.system === 'object') doc.system = it.system;
+      // Unlike `system` (silently dropped when malformed, pinned behaviour), a
+      // malformed `flags` is REJECTED. Flags carry provenance the sheet depends
+      // on; dropping a bad one would create an item that looks fine and renders
+      // empty, which is precisely the failure this field was added to prevent.
+      if (it.flags !== undefined) {
+        if (it.flags === null || typeof it.flags !== 'object' || Array.isArray(it.flags)) {
+          throw new Error(
+            `items[${idx}] ("${it.name}"): "flags" must be a plain object when provided`
+          );
+        }
+        doc.flags = it.flags;
+      }
       return doc;
     });
 

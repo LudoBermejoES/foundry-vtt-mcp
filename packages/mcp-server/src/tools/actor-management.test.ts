@@ -70,8 +70,29 @@ describe('the surface makes item creation discoverable', () => {
     const items = def.inputSchema.properties.items;
 
     expect(items.items.required).toEqual(['name', 'type']);
-    expect(Object.keys(items.items.properties).sort()).toEqual(['img', 'name', 'system', 'type']);
+    expect(Object.keys(items.items.properties).sort()).toEqual([
+      'flags',
+      'img',
+      'name',
+      'system',
+      'type',
+    ]);
     expect(def.inputSchema.properties.actorIdentifier.description).toMatch(/create-items/);
+  });
+
+  // The migration in `link-mage-focus-as-items` decides whether the bridge can
+  // carry provenance by READING this schema. If `flags` is not advertised here
+  // the capability does not exist as far as any caller is concerned, however
+  // well the module below handles it.
+  it('advertises `flags` as an optional free-form object, not a required field', () => {
+    const def = definition();
+    const flags = def.inputSchema.properties.items.items.properties.flags;
+
+    expect(flags).toBeDefined();
+    expect(flags.type).toBe('object');
+    expect(flags.additionalProperties).toBe(true);
+    expect(def.inputSchema.properties.items.items.required).not.toContain('flags');
+    expect(flags.description).toMatch(/provenance/i);
   });
 });
 
@@ -117,6 +138,78 @@ describe('create-items forwards to the existing query', () => {
 
     await expect(
       tools.handleManageActors({ action: 'create-items', actorIdentifier: 'Lena', items: [] })
+    ).rejects.toThrow();
+    expect(bridge()).toEqual([]);
+  });
+});
+
+// ─── `flags` reach the bridge, and their absence changes nothing ─────────────
+
+describe('create-items carries provenance flags through to the bridge', () => {
+  it('forwards caller-supplied `flags` verbatim alongside name/type/system', async () => {
+    const { tools, bridge } = makeTools();
+
+    await tools.handleManageActors({
+      action: 'create-items',
+      actorIdentifier: 'Otto Von Grugger',
+      items: [
+        {
+          name: 'Hechicería',
+          type: 'Feature',
+          system: { type: 'wod.types.practice', description: '' },
+          flags: {
+            'wod20-char': { id: 'mage/practice/hechiceria', line: 'mage', sourceType: 'practice' },
+          },
+        },
+      ],
+    });
+
+    expect(bridge()).toHaveLength(1);
+    expect(bridge()[0].method).toBe('foundry-mcp-bridge.addActorItems');
+    expect(bridge()[0].data).toEqual({
+      actorIdentifier: 'Otto Von Grugger',
+      items: [
+        {
+          name: 'Hechicería',
+          type: 'Feature',
+          system: { type: 'wod.types.practice', description: '' },
+          flags: {
+            'wod20-char': { id: 'mage/practice/hechiceria', line: 'mage', sourceType: 'practice' },
+          },
+        },
+      ],
+    });
+  });
+
+  it('sends no `flags` key at all when the caller supplies none', async () => {
+    const { tools, bridge } = makeTools();
+
+    await tools.handleManageActors({
+      action: 'create-items',
+      actorIdentifier: 'Lena',
+      items: [{ name: 'Notes', type: 'Feature', system: { value: 1 } }],
+    });
+
+    // Key-level, not `toEqual`: zod must not materialise the omitted optional,
+    // or every pre-existing caller starts sending a payload it did not send.
+    const sent = bridge()[0].data.items[0];
+    expect(Object.keys(sent).sort()).toEqual(['name', 'system', 'type']);
+    expect('flags' in sent).toBe(false);
+  });
+
+  it.each([
+    ['an array', [{ 'wod20-char': {} }]],
+    ['null', null],
+    ['a string', 'wod20-char'],
+  ])('rejects a malformed `flags` (%s) before touching the bridge', async (_label, flags) => {
+    const { tools, bridge } = makeTools();
+
+    await expect(
+      tools.handleManageActors({
+        action: 'create-items',
+        actorIdentifier: 'Lena',
+        items: [{ name: 'Notes', type: 'Feature', flags }],
+      })
     ).rejects.toThrow();
     expect(bridge()).toEqual([]);
   });
